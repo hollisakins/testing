@@ -14,6 +14,7 @@ Example usage:
 
 """
 
+import numpy as np
 from __future__ import annotations
 from collections.abc import Iterable
 
