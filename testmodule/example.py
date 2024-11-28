@@ -14,16 +14,31 @@ Example usage:
 
     from testmodule import ExampleClass
     e = ExampleClass('test')
+
 """
 
 
 class ExampleClass:
-    '''Docstring for example class'''
-    def __init__(self, name):
+    '''
+    Docstring for example class. This class can be used for nothing much
+    in particular, its just an example. 
 
-        '''Name of the object'''
+
+    Attributes:
+        name (str)
+            The name of the object. 
+
+    '''
+    
+    def __init__(self, name):
         self.name = name
 
     def method(self, prop):
-        '''Docstring for example method'''
+        '''
+        Docstring for example method.
+
+        Args:
+            prop (str)
+                An arbitrary property to assign to ExampleClass. Not used for anything.
+        '''
         return f"{self.name} is {prop}"
