@@ -18,7 +18,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 
-border_chars = config.border_chars
 
 np_handled_array_functions = {}
 
