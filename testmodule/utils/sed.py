@@ -27,6 +27,22 @@ class SED:
     '''
     Primarily class for manipulating galaxy SEDs.
 
+    Args:
+        wav_rest (array-like)
+            The rest-frame wavelengths of the SED. 
+        redshift (float)
+            Redshift of the source (defaults to 0).
+        verbose (bool)
+            Verbosity flag (defaults to True).
+        units (bool, optional)
+            Whether to use units (defaults to True). If True, the SED object
+            expects wavelengths/fluxes to be provided with units via astropy.units, 
+            and will assign the default units (specified in brisket.config) if none 
+            are provided.
+        **kwargs
+            Flux specification: no more than one of 'Llam', 'Lnu', 'flam', 'fnu', 'nuLnu', 'lamLlam', 'nufnu', 'lamflam' 
+            If none are provided, the SED will be populated with zeros (in L_lam).
+
     
     Attributes:
         wav_rest (array-like)
@@ -40,25 +56,6 @@ class SED:
                  verbose: bool = True, 
                  units: bool = True, 
                  **kwargs):
-        '''
-        wav_rest : array-like
-            Rest-frame wavelengths of the SED.
-        redshift : float, optional 
-            Redshift of the source (defaults to 0).
-        verbose : bool, optional
-            Verbosity flag (defaults to True).
-        units : bool, optional
-            Whether to use units (defaults to True). If True, the class 
-            expects wavelengths/fluxes to be provided with units via astropy.units, 
-            and will assign the default units (specified in brisket.config) if none 
-            are provided.
-        kwargs : 
-            Flux specification: 
-            no more than one of 'Llam', 'Lnu', 'flam', 'fnu',
-                        'nuLnu', 'lamLlam', 'nufnu', 'lamflam' 
-            If none are provided, the SED will be populated with zeros (in L_lam).
-        '''
-
         if verbose:
             self.logger = setup_logger(__name__, 'INFO')
         else:
@@ -110,9 +107,11 @@ class SED:
 
     @_y.setter
     def _y(self, value):
+        '''Allows _y to be set directly'''
         self.flux_specs[self._which] = value
 
     def __getitem__(self, indices):
+        '''Allows access to the flux array via direct indexing of the SED object'''
         newobj = deepcopy(self)
         newobj._y = newobj._y[indices]
         return newobj
@@ -122,6 +121,9 @@ class SED:
 
     @property
     def fnu(self):
+        '''
+        Spectral flux density in terms of flux per unit frequency. Automatically converts from the flux specification defined at construction.
+        '''
         if self._which_str=='fnu':
             return (self._y).to(config.default_fnu_unit)
         elif self._which_str=='flam':
@@ -139,6 +141,9 @@ class SED:
     
     @property
     def flam(self):
+        '''
+        Spectral flux density in terms of flux per unit wavelength. Automatically converts from the flux specification defined at construction.
+        '''
         if self._which_str=='fnu':
             return (self._y / self.wav_obs**2 * speed_of_light).to(config.default_flam_unit)
         elif self._which_str=='flam':
@@ -301,42 +306,62 @@ class SED:
     ########################################################################################################################
     @property
     def Lbol(self):
+        '''
+        Bolometric luminosity of the SED.
+        To be implemented.
+        '''
         return None
 
     @property
     def beta(self):
-        '''UV spectral slope measured using the Calzetti et al. (1994) spectral windows'''
-        if self.units: w = self.wav_rest.to(u.angstrom).value
-        else: w = self.wav_rest
+        '''
+        UV spectral slope measured using the Calzetti et al. (1994) spectral windows.
+        If the SED has no unit information, returns NotImplemented.
+        '''
+        if not self.units:
+            return NotImplemented
+        w = self.wav_rest.to(u.angstrom).value
         windows = ((w>=1268)&(w<=1284))|((w>=1309)&(w<=1316))|((w>=1342)&(w<=1371))|((w>=1407)&(w<=1515))|((w>=1562)&(w<=1583))|((w>=1677)&(w<=1740))|((w>=1760)&(w<=1833))|((w>=1866)&(w<=1890))|((w>=1930)&(w<=1950))|((w>=2400)&(w<=2580))
         p = np.polyfit(np.log10(w[windows]), np.log10(self.flam[windows].value), deg=1)
         return p[0]
 
     @property
-    def Muv(self):
+    def Muv(self) -> float | NotImplemented:
+        '''
+        Rest-frame UV absolute magnitude, computed in tophat window from 1450-1550 Angstroms.
+        If the SED has no unit information, returns NotImplemented.
+        '''
+        if not self.units: 
+            return NotImplemented
         w = self.wav_rest.to(u.angstrom).value
         tophat = (w > 1450)&(w < 1550)
         mUV = (np.mean(self.fnu[tophat])/(1+self.redshift)).to(u.ABmag).value
         return mUV - 5*(np.log10(self.luminosity_distance.to(u.pc).value)-1)
 
     @property
-    def properties(self):
+    def properties(self) -> dict:
+        '''Dictionary of derived SED properties'''
         return dict(beta=self.beta, Lbol=self.Lbol)
 
     @property 
     def wav_obs(self):
+        '''Observed-frame wavelengths'''
         return self.wav_rest * (1+self.redshift)        
     @property 
     def freq_rest(self):
+        '''Rest-frame frequencies'''
         return (speed_of_light/self.wav_rest).to(config.default_frequency_unit)
     @property 
     def freq_obs(self):
+        '''Observed-frame frequencies'''
         return self.freq_rest / (1+self.redshift)
     @property 
     def energy_rest(self):
+        '''Rest-frame energies'''
         return (plancks_constant * self.freq_rest).to(config.default_energy_unit)
     @property 
     def energy_obs(self):
+        '''Observed-frame energies'''
         return self.energy_rest / (1+self.redshift)
 
     # things to compute automatically:
@@ -352,18 +377,55 @@ class SED:
     def plot(self, ax: mpl.axes.Axes = None, 
              x: str = 'wav_rest', 
              y: str = 'fnu', 
+             step: bool = False, 
              xscale: str = 'linear',
              yscale: str = 'linear',
              xunit: str | u.Unit = None,
              yunit: str | u.Unit = None,
+             xlim: tuple[float,float] = None, 
+             ylim: tuple[float,float] = None, 
              verbose_labels: bool = False,
              show: bool = False, 
              save: bool = False, 
              eng: bool = False, 
-             xlim: tuple[float,float] = None, 
-             ylim: tuple[float,float] = None, 
-             step: bool = False, 
              **kwargs):
+        """
+
+        Args:
+            ax (mpl.axes.Axes)
+                Matplotlib axes object to plot on. If None (default), a new figure is created.
+            x (str)
+                SED property to plot on the x-axis. Default: 'wav_rest'. 
+                Accepts 'wav_rest', 'wav_obs', 'freq_rest', 'freq_obs'.
+            y (str)
+                SED property to plot on the y-axis. Default: 'fnu'.
+                Accepts 'fnu', 'flam', 'Lnu', 'Llam'.
+            step (bool)
+                Whether to plot a step plot. Default: False.
+            xscale (str)
+                Scaling for the x-axis. Default: 'linear'.
+            yscale (str)
+                Scaling for the y-axis. Default: 'linear'.
+            xunit (str or u.Unit)
+                Unit for the x-axis. Default: None, i.e., interpreted automatically
+                from the x-axis values. 
+            yunit (str or u.Unit)
+                Unit for the y-axis. Default: None, i.e., interpreted automatically
+                from the y-axis values.
+            xlim (tuple)
+                Limits for the x-axis. Default: None, i.e., automatically determined.
+            ylim (tuple)
+                Limits for the y-axis. Default: None, i.e., automatically determined.
+            verbose_labels (bool)
+                Whether to use verbose axis labels. Default: False.
+            show (bool)
+                Whether to display the plot. Default: False.
+            save (bool)
+                Whether to save the plot. Default: False.
+            **kwargs
+                Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
+        """
+        
 
         x_plot = getattr(self, x)
         y_plot = getattr(self, y)     
@@ -461,7 +523,7 @@ class SED:
 
 
     def implements(np_function):
-        "Register an __array_function__ implementation for SED objects."
+        # "Register an __array_function__ implementation for SED objects."
         def decorator(func):
             np_handled_array_functions[np_function] = func
             return func
@@ -476,13 +538,31 @@ class SED:
 
     @implements(np.convolve)
     def convolve(sed: SED, kernel: np.ndarray, mode: str = 'full') -> SED:
+        """
+        Implementation of np.convolve for SED objects
+
+        Args:
+            sed (SED)
+                SED object to convolve.
+            kernel (np.ndarray)
+                Convolution kernel.
+            mode (str)
+                Convolution mode, passed to np.convolve. Default: 'full'.
+
+        """
         newobj = deepcopy(sed)
         newobj._y = np.convolve(sed._y, kernel, mode=mode)
         return newobj
 
     @implements(np.shape)
     def shape(sed: SED) -> tuple:
-        "Implementation of np.shape for SED objects"
+        """Implementation of np.shape for SED objects. 
+        Returns the shape of the SED flux array.
+        
+        Args:
+            sed (SED)
+                SED object.
+        """
         return np.shape(sed._y)
 
     @property 
