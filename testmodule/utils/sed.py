@@ -512,37 +512,3 @@ class SED:
         newobj = deepcopy(self)
         newobj._y = np.transpose(self._y)
         return newobj
-
-
-
-
-
-
-# class PosteriorSED():
-#     pass
-
-
-# flux = np.ones(len(wav)) * u.uJy
-if __name__ == '__main__':
-    wav = np.linspace(100, 8000, 5000)
-    Llam = np.zeros(len(wav))
-    sed = SED(wav_rest=wav, Llam = Llam, redshift=1, units=False)
-    
-    # print(np.convolve(sed, np.ones(10), mode='full'))
-
-    # newsed = sed.T * Llam.T
-    # import numpy as np
-    # print(np.sum(sed, axis=0))
-
-
-
-# print(s2)
-
-# fig, ax = s1.plot(y='flam')
-# s2.plot(y='flam', xscale='log', yscale='log', eng=True)
-# s.plot(ax=ax, y='flam')
-# plt.show()
-
-
-
-# s.compute_photometry(['f070w'])
