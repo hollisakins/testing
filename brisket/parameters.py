@@ -14,17 +14,29 @@ from . import config
 from .console import console, setup_logger, PathHighlighter, LimitsHighlighter
 from .models import PowerlawAccrectionDiskModel, InoueIGMModel, SpectralCalibrationModel
 
+'''Default models to use for for different components.'''
 model_defaults = {'agn':PowerlawAccrectionDiskModel, 
                   'igm':InoueIGMModel, 
                   'calib': SpectralCalibrationModel}
                 #   'constant':ConstantSFHModel,
                 #   'Salim':SalimDustModel,}
 
-
 # TODO default model choices given source names
 # TODO default parameter choices given source names
 
 class Params:
+    '''
+    The Params class is used to store and manage model parameters.
+    
+    Args:
+        template (str, optional)
+            Name of the parameter template to use, if desired (default: None).
+        file (str, optional)
+            Path to parameter file, if desired (default: None).
+        verbose (bool, optional)
+            Whether to print log messages (default: False).
+    
+    '''
     def __init__(self, template=None, file=None, verbose=False): #*args, **kwargs):
         if verbose:
             self.logger = setup_logger(__name__, 'INFO')
@@ -56,6 +68,16 @@ class Params:
         self.validated = False
 
     def add_group(self, name, model=None):
+        '''
+        Add a group to the Params object. Groups are used to organize parameters into... well, groups.
+
+        Args:
+            name (str)
+                Name of the group, used to reference it in later calls to the Params object. 
+            model (class, optional)
+                The model class to use for this group of parameters. If not specified, the 
+                model will be chosen based on the name of the group based on the model_defaults dict. 
+        '''
         if model is None:
             model_def = None
             for key in model_defaults:
@@ -72,15 +94,19 @@ class Params:
 
     # specific, commongly used models
     def add_nebular(self, model=None):
+        """Alias for adding a 'nebular' group."""
         self.add_group('nebular', model=model)
 
     def add_dust(self, model=None):
+        """Alias for adding a 'dust' group."""
         self.add_group('dust', model=model)
     
     def add_igm(self, model=None):
+        """Alias for adding a 'igm' group."""
         self.add_group('igm', model=model)
         
     def add_calibration(self, model=None):
+        """Alias for adding a 'calibration' group."""
         self.add_group('calibration', model=model)
 
     ##############################
@@ -124,17 +150,21 @@ class Params:
 
     @property 
     def free_param_names(self):
+        """List of names of free parameters in the model."""
         return list(self.free_params.keys())
     @property 
     def free_param_priors(self):
+        """List of priors for free parameters in the model."""
         return [param.prior for param in self.free_params.values()] 
     @property
     def all_param_names(self):
+        """List of names of parameters in the model."""
         return list(self.all_params.keys())
     @property 
     def all_param_values(self):
+        """List of values of parameters in the model."""
         return list(self.all_params.values())
-
+    
     @property
     def component_names(self):
         return sorted(list(self._components.keys()), key=self._component_orders.__getitem__)
@@ -162,7 +192,8 @@ class Params:
     def __repr__(self):
         return f"Params(components=[{(', '.join(self.component_names)).rstrip()}], nparam={self.nparam}, ndim={self.ndim})"
         
-    def print_summary(self):
+    def print_table(self):
+        """Prints a summary of the model parameters, in table form."""
         h = PathHighlighter()
         l = LimitsHighlighter()
         if (self.ndim == 0) or (self.nparam != self.ndim):
@@ -195,6 +226,7 @@ class Params:
             console.print(table)
 
     def print_tree(self):
+        """Prints a summary of the model parameters, in tree form."""
         tree = Tree(f"[bold italic white]Params[/bold italic white](nparam={self.nparam}, ndim={self.ndim})")
         comps = list(self.components.keys())
         names = [n for n in self.all_param_names if '/' not in n]
@@ -284,6 +316,7 @@ class Params:
     #     self.validated = True
 
     def update(self, new_params):
+        """Updates the Params object with new_params."""
         assert set(new_params._components.keys()) == set(self._components.keys()), 'Cannot update Params object with different components'
 
         self.all_params.update(new_params.all_params)

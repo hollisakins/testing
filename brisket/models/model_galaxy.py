@@ -39,54 +39,25 @@ from ..console import setup_logger
 # from brisket.parameters import Params
 
 class ModelGalaxy(object):
-    """ Model galaxy generation with BRISKET.
+    """
+    Model galaxy generation with BRISKET.
 
-    Parameters
-    ----------
+    Args:
+        parameters (brisket.parameters.Params)
+            Model parameters.
     
-    parameters, 
-    filt_list=None,
-    spec_wavs=None,
-    wav_units=u.um,
-    sed_units=u.uJy,
-    spec_units=u.erg/u.s/u.cm**2/u.angstrom,
-    phot_units=u.uJy,
-    logger=utils.NullLogger
+        filt_list (list, optional)
+            A list of filter curves (default: None).
+            Only needed if photometric output is desired (internal 
+            model SED will be generated regardless).
 
-    parameters : brisket.parameters.Params object or dict
-        Model parameters. If provided as dict, it will be converted 
-        to brisket.parameters.Params object to validate the input. 
+        spec_wavs (list, optional)
+            An array of spectroscopic wavelengths (default: None).
+            Only needed if spectroscopic output is desired (internal 
+            model SED will be generated regardless).
 
-    filt_list : list - optional
-        A list of filter curves as defined in brisket.filters. 
-        Only needed if photometric output is desired (internal 
-        model SED will be generated regardless).
-        Default: None
-
-    spec_wavs : list - optional
-        An array of spectroscopic wavelengths.
-        Only needed if spectroscopic output is desired (internal 
-        model SED will be generated regardless).
-        Default: None
-
-    wav_units : astropy.units.Unit - optional
-        Desired wavelength units for spectroscopic/SED output. 
-        Default: micron
-
-    sed_units : astropy.units.Unit - optional
-        Desired flux units for model SED output. Can specify units in 
-        f_nu or f_lambda, or nu*f_nu / lambda*f_lambda. 
-        Default: uJy
-    
-    spec_units : astropy.units.Unit - optional
-        Desired flux units for spectroscopic output. Can specify units in 
-        f_nu or f_lambda. 
-        Default: erg/s/cm**2/angstrom
-
-    phot_units : astropy.units.Unit - optional
-        Desired flux units for photometric output. Can specify units in 
-        f_nu or f_lambda. 
-        Default: uJy
+        verbose (bool, optional)
+            Whether to print log messages (default: True).
     """
     def __init__(self, 
                  params: Params, 
@@ -160,7 +131,7 @@ class ModelGalaxy(object):
 
         # Calculate optimal wavelength sampling for the model
         self.logger.info('Calculating optimal wavelength sampling for the model')
-        self.wavelengths = self._get_wavelength_sampling()
+        self.wavelengths = self.get_wavelength_sampling()
 
         if self.phot_output:
             self.logger.info('Resampling the filter curves onto model wavelength grid')
@@ -224,17 +195,17 @@ class ModelGalaxy(object):
 
         self.logger.info('Computing the SED')
         # Compute the main SED 
-        self._compute_sed() 
+        self.compute_sed() 
 
         # Compute observables
         if self.phot_output:
-            self._photometry = self._compute_photometry(self._sed)
+            self._photometry = self.compute_photometry(self._sed)
 
         if self.spec_output:
-            self._spectrum = self._compute_spectrum(self._sed)
+            self._spectrum = self.compute_spectrum(self._sed)
     
         # if self.prop_output:
-            # self._compute_properties()
+            # self.compute_properties()
 
 
     # def _define_base_params_at_redshift(self):
@@ -264,22 +235,22 @@ class ModelGalaxy(object):
         self.params.update(params)
 
         # Compute the internal full SED 
-        self._compute_sed()
+        self.compute_sed()
 
         # If photometric output, compute photometry
         if self.phot_output:
-            self._photometry = self._compute_photometry(self._sed)
+            self._photometry = self.compute_photometry(self._sed)
 
         # If spectroscopic output, compute spectrum
         if self.spec_output:
-            self._spectrum = self._compute_spectrum(self._sed)
+            self._spectrum = self.compute_spectrum(self._sed)
 
 
-    def _compute_sed(self):
+    def compute_sed(self):
         """ This method is the primary workhorse for ModelGalaxy. It combines the 
         models for the various emission and absorption processes to 
         generate the internal full galaxy SED held within the class. 
-        The _compute_photometry and compute_spectrum methods generate observables 
+        The compute_photometry and compute_spectrum methods generate observables 
         using this internal full spectrum. """
 
         self._sed = SED(self.wavelengths, redshift=self.redshift, verbose=False, units=False)
@@ -440,7 +411,7 @@ class ModelGalaxy(object):
         #     for line in self.nebular.line_grid:
         #         self.nebular.line_grid[line] *= unit_conv * self.igm_trans / (self.lum_flux * (1+self.redshift))
 
-    def _get_wavelength_sampling(self):
+    def get_wavelength_sampling(self):
         """ Calculate the optimal wavelength sampling for the model
         given the required resolution values specified in the config
         file. The way this is done is key to the speed of the code. """
@@ -525,7 +496,7 @@ class ModelGalaxy(object):
         return np.array(x)
 
 
-    def _compute_photometry(self, sed):
+    def compute_photometry(self, sed):
         """ This method generates predictions for observed photometry.
         It resamples filter curves onto observed frame wavelengths and
         integrates over them to calculate photometric fluxes. """
@@ -539,7 +510,7 @@ class ModelGalaxy(object):
         phot = self.filter_set.get_photometry(sed, self.redshift)#output_units=self.phot_units)
         return phot
 
-    def _compute_spectrum(self, sed):
+    def compute_spectrum(self, sed):
         """ This method generates predictions for observed spectroscopy.
         It optionally applies a Gaussian velocity dispersion then
         resamples onto the specified set of observed wavelengths. """
@@ -598,7 +569,7 @@ class ModelGalaxy(object):
     # def plot_full_spectrum(self, show=True):
     #     return plotting.plot_full_spectrum(self, show=show)
 
-    def _compute_properties(self): 
+    def compute_properties(self): 
 
         self.properties = {}
 
@@ -607,28 +578,28 @@ class ModelGalaxy(object):
 
         # full SEDs (and spec, phot) for each component
         self.properties['SED'] = self.sed
-        if self.phot_output: self.properties['photometry'] = self._compute_photometry(self.sed)
-        if self.spec_output: self.properties['spectrum'] = self._compute_spectrum(self.sed)
+        if self.phot_output: self.properties['photometry'] = self.compute_photometry(self.sed)
+        if self.spec_output: self.properties['spectrum'] = self.compute_spectrum(self.sed)
 
         if len(self.components) >= 2:
             if 'galaxy' in self.components: 
                 self.properties['SED_galaxy'] = self.sed_galaxy
-                if self.phot_output: self.properties['phot_galaxy'] = self._compute_photometry(self.sed_galaxy)
-                if self.spec_output: self.properties['spec_galaxy'] = self._compute_spectrum(self.sed_galaxy)
+                if self.phot_output: self.properties['phot_galaxy'] = self.compute_photometry(self.sed_galaxy)
+                if self.spec_output: self.properties['spec_galaxy'] = self.compute_spectrum(self.sed_galaxy)
             if 'agn' in self.components: 
                 self.properties['SED_accdisk'] = self.sed_accdisk
                 self.properties['SED_AGN'] = self.sed_agn
-                if self.phot_output: self.properties['phot_AGN'] = self._compute_photometry(self.sed_agn)
-                if self.spec_output: self.properties['spec_AGN'] = self._compute_spectrum(self.sed_agn)
+                if self.phot_output: self.properties['phot_AGN'] = self.compute_photometry(self.sed_agn)
+                if self.spec_output: self.properties['spec_AGN'] = self.compute_spectrum(self.sed_agn)
             if 'nebular' in self.components: 
                 self.properties['SED_nebular'] = self.sed_nebular
                 for line in self.nebular.line_grid:
                     self.properties[f'SED_nebular_{line}'] = self.nebular.line_grid[line]
-                if self.phot_output: self.properties['phot_nebular'] = self._compute_photometry(self.sed_nebular)
+                if self.phot_output: self.properties['phot_nebular'] = self.compute_photometry(self.sed_nebular)
                 if self.spec_output: 
-                    self.properties['spec_nebular'] = self._compute_spectrum(self.sed_nebular)
+                    self.properties['spec_nebular'] = self.compute_spectrum(self.sed_nebular)
                     for line in self.nebular.line_grid:
-                        self.properties[f'spec_nebular_{line}'] = self._compute_spectrum(self.nebular.line_grid[line])
+                        self.properties[f'spec_nebular_{line}'] = self.compute_spectrum(self.nebular.line_grid[line])
 
 
         if 'galaxy' in self.components: 
