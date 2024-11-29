@@ -1,9 +1,9 @@
 import os, sys
 
-project = "testmodule"
+project = "brisket"
 release = '0.1.0'
 
-sys.path.insert(0, os.path.abspath("../testmodule"))
+sys.path.insert(0, os.path.abspath("../brisket"))
 sys.path.insert(0, os.path.abspath(".."))
 sys.path.insert(0, os.path.abspath("."))
 

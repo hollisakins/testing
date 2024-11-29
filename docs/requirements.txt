@@ -1,3 +1,6 @@
+astropy>=6.1.2
+numpy>2
+
 furo
 nbsphinx
 sphinx_autodoc_typehints

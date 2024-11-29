@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 
 [project]
-name = "testmodule"
+name = "brisket"
 version = "0.1.0"
 description = 'Test module for testing documenation stuff'
 authors = [
@@ -26,6 +26,7 @@ dependencies = [
     "scipy",
     "boto3",
     "tqdm",
+    "spectres",
 ]
 
 [project.optional-dependencies]
