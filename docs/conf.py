@@ -40,6 +40,7 @@ extensions = [
 # }
 
 autosummary_generate = True  # Turn on sphinx.ext.autosummary
+autodoc_member_order = 'bysource'
 
 templates_path = ["_templates"]
 
