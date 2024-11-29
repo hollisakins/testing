@@ -1,3 +1,7 @@
+'''
+This module provides utilities for logging and console output, using the ``rich`` and ``logging`` packages. 
+'''
+
 from . import config
 from rich.console import Console
 console = Console()

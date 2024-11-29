@@ -4,10 +4,13 @@ brisket/__init__.py
 brisket/config.py
 brisket/console.py
 brisket/example.py
+brisket/parameters.py
 brisket.egg-info/PKG-INFO
 brisket.egg-info/SOURCES.txt
 brisket.egg-info/dependency_links.txt
 brisket.egg-info/requires.txt
 brisket.egg-info/top_level.txt
+brisket/models/__init__.py
+brisket/models/model_galaxy.py
 brisket/utils/__init__.py
 brisket/utils/sed.py
