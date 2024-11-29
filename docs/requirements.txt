@@ -1,6 +1,8 @@
 astropy>=6.1.2
 numpy>2
-
+spectres
+rich
+matplotlib
 furo
 nbsphinx
 sphinx_autodoc_typehints
