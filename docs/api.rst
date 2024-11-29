@@ -8,4 +8,4 @@ API Reference
    :template: custom-module-template.rst
    :recursive:
 
-   testmodule
+   brisket

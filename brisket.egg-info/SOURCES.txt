@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+brisket/__init__.py
+brisket/config.py
+brisket/console.py
+brisket/example.py
+brisket.egg-info/PKG-INFO
+brisket.egg-info/SOURCES.txt
+brisket.egg-info/dependency_links.txt
+brisket.egg-info/requires.txt
+brisket.egg-info/top_level.txt
+brisket/utils/__init__.py
+brisket/utils/sed.py
