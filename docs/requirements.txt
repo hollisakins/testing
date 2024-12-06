@@ -4,6 +4,7 @@ spectres
 rich
 matplotlib
 h5py
+toml
 furo
 nbsphinx
 sphinx_autodoc_typehints
