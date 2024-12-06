@@ -69,10 +69,7 @@ class BaseSFHModel:
     def _resample(self, _):
         pass
 
-    def update(self, params):
-        """
-        Update the SFH model with new parameters. Called by the parent stellar model emit() method.
-        """
+    def update(self, params, weight=1):
         self.params = params
         logMstar = np.power(10., float(params.parent['logMstar']))
 

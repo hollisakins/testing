@@ -1,0 +1,15 @@
+*.egg-info/
+brisket/__pycache__/
+brisket/utils/__pycache__/
+brisket/models/__pycache__/
+brisket/fitting/__pycache__/
+brisket/data/__pycache__/
+brisket/.DS_Store
+.DS_Store
+brisket/data/*.fits
+brisket/data/*.hdf5
+brisket/data/raw_data/
+brisket/data/raw_data/*
+!brisket/data/raw_data/bc03/
+brisket/data/raw_data/bc03/*
+!brisket/data/raw_data/bc03/*.py

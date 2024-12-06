@@ -47,4 +47,4 @@ templates_path = ["_templates"]
 master_doc = "index"
 
 html_theme = "furo"
-html_title = "Test Module"
+html_title = "BRISKET"

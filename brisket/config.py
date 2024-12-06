@@ -25,7 +25,7 @@ grid_dir = install_dir + "/data"
 res_dir = install_dir + "/models/res"
 '''Stores the path to the resolution curve directory for easy reference'''
 
-filter_directory = install_dir + '/filters/filter_files/filter_directory.toml'
+filter_directory = install_dir + '/utils/filter_files/filter_directory.toml'
 '''Stores the path to the filter directory for easy reference'''
 
 
@@ -36,12 +36,11 @@ from astropy.cosmology import Planck18 as cosmo
 '''The cosmology used in the code. Defaults to Planck 2018 cosmology, but can be changed to any astropy cosmology object.'''
 
 # These variables control the wavelength sampling for models.
-R_spec = 1000.
-'''Sets the R = lambda/dlambda value for spectroscopic outputs.'''
-R_phot = 100.
-'''Sets the R value for photometric regions.'''
-R_other = 50.
-'''Sets the R value for other spectral regions.'''
+R_default = 20.
+'''Sets the default R = lambda/dlambda value for the model wavelength sampling.'''
+
+R_max = 5000.
+'''Sets the maximum R.'''
 
 # np.array([r['WAVELENGTH']*1e4, r['R']]).T
 R_curves = {}
@@ -58,6 +57,11 @@ max_wavelength = 1 * cm
 
 max_redshift = 20.
 '''Sets the maximum redshift the code is set up to calculate models for.'''
+
+min_redshift = 0.
+'''Sets the minimum redshift the code is set up to calculate models for. 
+   Should always be set to 0, but can be changed internally during runtime 
+   to improve efficiency for fitting models over narrower redshift ranges.'''
 
 
 import shutil

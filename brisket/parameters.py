@@ -9,6 +9,7 @@ from collections.abc import MutableMapping
 from rich.table import Table
 from rich.tree import Tree
 
+
 from . import config
 # from .fitting import priors
 from .console import console, setup_logger, PathHighlighter, LimitsHighlighter

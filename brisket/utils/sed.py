@@ -23,7 +23,8 @@ from astropy.constants import c as speed_of_light
 from astropy.constants import h as plancks_constant
 import spectres
 
-from brisket import config
+from .. import config
+from . import utils
 border_chars = config.border_chars
 from brisket.console import setup_logger
 
@@ -37,7 +38,7 @@ np_handled_array_functions = {}
 
 class SED:
     '''
-    Primarily class for manipulating galaxy SEDs.
+    Primary class for manipulating galaxy SEDs.
 
     Args:
         wav_rest (array-like)
@@ -63,8 +64,8 @@ class SED:
     '''
     
     def __init__(self, 
-                 wav_rest: Iterable[float], 
-                 redshift: float = 0, 
+                #  wav_rest: Iterable[float], 
+                #  redshift: float = 0, 
                  verbose: bool = True, 
                  units: bool = True, 
                  **kwargs):
@@ -75,47 +76,64 @@ class SED:
 
         self.units = units
         self.redshift = redshift
-        self.wav_rest = wav_rest
         self.luminosity_distance = config.cosmo.luminosity_distance(self.redshift).to(u.pc)
         if self.redshift == 0:
             self.luminosity_distance = 10 * u.pc
         if not units:
             self.luminosity_distance = self.luminosity_distance.value
 
-        self.flux_keys = ['Llam', 'Lnu', 'flam', 'fnu', 'nuLnu', 'lamLlam', 'nufnu', 'lamflam']
-        self.flux_specs = [kwargs.get(k, None) for k in self.flux_keys]
-        if sum(x is not None for x in self.flux_specs) == 0:
+        self.wav_rest = wav_rest
+        self.x_keys = ['wav_rest', 'wav_obs', 'freq_rest', 'freq_obs', 'energy_rest', 'energy_obs']
+        self.x_specs = [kwargs.get(k, None) for k in self.x_keys]
+        if sum(x is not None for x in self.x_specs) != 1:
+            self.logger.error(f"""Must supply exactly one specification of the SED 
+                                  wavelength/frequency/energy axis. 
+                                  Options are: {self.x_keys}""")
+            sys.exit()
+        self._which_x = [x is not None for x in self.x_specs].index(True)
+        self._which_x_str = self.x_keys[self._which_x]
+
+        self.y_keys = ['Llam', 'Lnu', 'flam', 'fnu', 'nuLnu', 'lamLlam', 'nufnu', 'lamflam']
+        self.y_specs = [kwargs.get(k, None) for k in self.flux_keys]
+        if sum(x is not None for x in self.y_specs) == 0:
             self.logger.info('No flux/luminosity information provided, populating with zeros. If this is intended, you can ignore this message.')
-            self.flux_specs[0] = np.zeros(len(wav_rest))
-            self._which = 0
+            self.y_specs[0] = np.zeros(len(self._x))
+            self._which_y = 0
         
-        elif sum(x is not None for x in self.flux_specs) != 1:
+        elif sum(x is not None for x in self.y_specs) != 1:
             self.logger.error("Must supply at most one specification of the SED fluxes"); sys.exit()
         
         else:
-            self._which = [x is not None for x in self.flux_specs].index(True)
-        self._which_str = self.flux_keys[self._which]
+            self._which_y = [x is not None for x in self.y_specs].index(True)
+        self._which_y_str = self.y_keys[self._which_y]
 
         if units:
-            flux_default_units = [config.default_Llam_unit, config.default_Lnu_unit, config.default_flam_unit, config.default_fnu_unit, config.default_lum_unit, config.default_lum_unit, config.default_flux_unit, config.default_flux_unit]
-            if not hasattr(self.wav_rest, "unit"):
-                self.logger.info(f"No wavelength units specified, adopting default ({config.default_wavelength_unit})")
-                self.wav_rest = self.wav_rest * config.default_wavelength_unit            
-            for i in range(len(self.flux_keys)):
-                if self.flux_specs[i] is not None:
-                    if not hasattr(self.flux_specs[i], "unit"):
-                        self.logger.info(f"No units specified for {self.flux_keys[i]}, adopting default ({flux_default_units[i]})")
-                        self.flux_specs[i] *= flux_default_units[i]
+            x_default_units = [config.default_wav_unit]*2 + [config.default_freq_unit]*2 + [config.default_energy_unit]*2
+            for i in range(len(self.x_keys)):
+                if self.x_specs[i] is not None:
+                    if not hasattr(self.x_specs[i], "unit"):
+                        self.logger.info(f"No units specified for {self.x_keys[i]}, adopting default ({x_default_units[i]})")
+                        self.x_specs[i] *= x_default_units[i]
 
-        if units:
-            self.wav_rest = self.wav_rest.to(config.default_wavelength_unit)
+            y_default_units = [config.default_Llam_unit, config.default_Lnu_unit, config.default_flam_unit, config.default_fnu_unit, config.default_lum_unit, config.default_lum_unit, config.default_flux_unit, config.default_flux_unit]
+            for i in range(len(self.y_keys)):
+                if self.y_specs[i] is not None:
+                    if not hasattr(self.y_specs[i], "unit"):
+                        self.logger.info(f"No units specified for {self.y_keys[i]}, adopting default ({y_default_units[i]})")
+                        self.y_specs[i] *= y_default_units[i]
 
+            self._x_unit = self._x.unit
+            self._y_unit = self._y.unit
 
+    @property
+    def _x(self):
+        '''Used internally, alias for the wavelength specification defined at construction'''
+        return self.x_specs[self._which_x]
 
     @property
     def _y(self):
         '''Used internally, alias for the flux specification defined at construction'''
-        return self.flux_specs[self._which]
+        return self.y_specs[self._which_y]
 
     @_y.setter
     def _y(self, value):
@@ -129,7 +147,57 @@ class SED:
         return newobj
     
     def __setitem__(self, indices, values):
+        '''Allows setting of the flux array via direct indexing of the SED object'''
         self._y[indices] = values
+
+    @property 
+    def wav_rest(self) -> u.Quantity | np.ndarray:
+        '''Rest-frame wavelengths'''
+        if self._which_x_str=='wav_rest': 
+            return self._x
+        elif self._which_x_str=='wav_obs': 
+            if self.redshift is None:
+                return NotImplemented
+            return self._x / (1+self.redshift)
+        elif self._which_x_str=='freq_rest': 
+            if not self.units:
+                return NotImplemented
+            return (speed_of_light/self._x).to(config.default_wavelength_unit)
+        elif self._which_x_str=='freq_obs': 
+            if self.redshift is None or not self.units:
+                return NotImplemented
+            return (speed_of_light/self._x/(1+self.redshift)).to(config.default_wavelength_unit)
+        elif self._which_x_str=='energy_rest': 
+            if not self.units:
+                return NotImplemented
+            return (plancks_constant * speed_of_light / self._x).to(config.default_wavelength_unit)
+        elif self._which_x_str=='energy_obs': 
+            if self.redshift is None or not self.units:
+                return NotImplemented
+            return (plancks_constant * speed_of_light / self._x / (1+self.redshift)).to(config.default_wavelength_unit)
+
+    @property 
+    def wav_obs(self) -> u.Quantity:
+        '''Observed-frame wavelengths'''
+        return self.wav_rest * (1+self.redshift)
+
+    @property 
+    def freq_rest(self) -> u.Quantity:
+        '''Rest-frame frequencies'''
+        return (speed_of_light/self.wav_rest).to(config.default_frequency_unit)
+    @property 
+    def freq_obs(self) -> u.Quantity:
+        '''Observed-frame frequencies'''
+        return self.freq_rest / (1+self.redshift)
+    @property 
+    def energy_rest(self) -> u.Quantity:
+        '''Rest-frame energies'''
+        return (plancks_constant * self.freq_rest).to(config.default_energy_unit)
+    @property 
+    def energy_obs(self) -> u.Quantity:
+        '''Observed-frame energies'''
+        return self.energy_rest / (1+self.redshift)
+
 
     @property
     def fnu(self):
@@ -343,7 +411,7 @@ class SED:
         Rest-frame UV absolute magnitude, computed in tophat window from 1450-1550 Angstroms.
         If the SED has no unit information, returns NotImplemented.
         '''
-        if not self.units: 
+        if not self.units or self.redshift is None: 
             return NotImplemented
         w = self.wav_rest.to(u.angstrom).value
         tophat = (w > 1450)&(w < 1550)
@@ -354,27 +422,6 @@ class SED:
     def properties(self) -> dict:
         '''Dictionary of derived SED properties'''
         return dict(beta=self.beta, Lbol=self.Lbol)
-
-    @property 
-    def wav_obs(self) -> u.Quantity:
-        '''Observed-frame wavelengths'''
-        return self.wav_rest * (1+self.redshift)        
-    @property 
-    def freq_rest(self) -> u.Quantity:
-        '''Rest-frame frequencies'''
-        return (speed_of_light/self.wav_rest).to(config.default_frequency_unit)
-    @property 
-    def freq_obs(self) -> u.Quantity:
-        '''Observed-frame frequencies'''
-        return self.freq_rest / (1+self.redshift)
-    @property 
-    def energy_rest(self) -> u.Quantity:
-        '''Rest-frame energies'''
-        return (plancks_constant * self.freq_rest).to(config.default_energy_unit)
-    @property 
-    def energy_obs(self) -> u.Quantity:
-        '''Observed-frame energies'''
-        return self.energy_rest / (1+self.redshift)
 
     # things to compute automatically:
     # wavelength, frequency, energy
@@ -462,9 +509,9 @@ class SED:
                     xunit = u.micron
                 # else:
                 #     xunit = u.mm
-            elif isintance(xunit, str):
+            elif isinstance(xunit, str):
                 xunit = utils.unit_parser(xunit)
-            elif isintance(yunit, str):
+            elif isinstance(yunit, str):
                 yunit = utils.unit_parser(yunit)
 
         x_plot = x_plot.to(xunit)
