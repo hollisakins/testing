@@ -11,7 +11,7 @@ from rich.tree import Tree
 
 
 from . import config
-# from .fitting import priors
+from .fitting import priors
 from .console import console, setup_logger, PathHighlighter, LimitsHighlighter
 from .models import PowerlawAccrectionDiskModel, InoueIGMModel, SpectralCalibrationModel
 
@@ -325,6 +325,21 @@ class Params:
 
         for component in self._components:
             self._components[component].update(new_params._components[component])
+
+    def update_from_vector(self, names, x):
+        # """Updates the free params from a flattened list of parameter values x."""
+
+        # assert len(x) == self.ndim, 'Number of parameters in x must match number of free parameters in Params object'
+        for i, name in enumerate(names):
+            if name in self.free_params:
+                del self.free_params[name]
+            self.all_params[name] = x[i]
+        
+        x_components = np.array([p.split('/')[0] for p in names])
+        x_names = np.array([p.removeprefix(c+'/') for p,c in zip(names, x_components)])
+        for component in x_components:
+            if component in self._components:
+                self._components[component].update_from_vector(x_names[x_components==component], x[x_components==component])
 
 
 

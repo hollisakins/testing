@@ -7,6 +7,8 @@ from . import utils
 from . import models
 from . import fitting
 
-from .parameters import Params
+from .fitting import priors
+from .parameters import Params, FreeParam, FixedParam
 from .models.core import Model
-from .fitting.observation import Observation
+from .observation import Observation, Photometry, Spectrum
+from .fitting.fitter import Fitter

@@ -5,6 +5,7 @@ if TYPE_CHECKING:
 
 import numpy as np
 import toml, sys, os
+import astropy.units as u
 from .. import config
 from .. import utils
 
@@ -25,7 +26,7 @@ class Filters(object):
         self.names = names
         self._load_filter_curves()
         self._calculate_effective_wavelengths()
-        self._calculate_min_max_wavelengths()
+        # self._calculate_min_max_wavelengths()
 
     def _load_filter_curves(self):
         """ Loads filter files for the specified filter_names and truncates
@@ -56,28 +57,6 @@ class Filters(object):
 
         if self.verbose: print("-" * 80)
 
-    def _calculate_min_max_wavelengths(self):
-        """ Finds the min and max wavelength values across all of the
-        filter curves. """
-
-        self.min_phot_wav = 9.9*10**99
-        self.max_phot_wav = 0.
-
-        for filt in self.names:
-            min_wav = (self.filt_dict[filt][0, 0]
-                       - 2*(self.filt_dict[filt][1, 0]
-                       - self.filt_dict[filt][0, 0]))
-
-            max_wav = (self.filt_dict[filt][-1, 0]
-                       + 2*(self.filt_dict[filt][-1, 0]
-                       - self.filt_dict[filt][-2, 0]))
-
-            if min_wav < self.min_phot_wav:
-                self.min_phot_wav = min_wav
-
-            if max_wav > self.max_phot_wav:
-                self.max_phot_wav = max_wav
-
     def _calculate_effective_wavelengths(self):
         """ Calculates effective wavelengths for each filter curve. """
 
@@ -94,6 +73,9 @@ class Filters(object):
                                        / self.filt_dict[filt][:, 0]))
             self.wav_min[i] = np.min(self.filt_dict[filt][:,0][self.filt_dict[filt][:,1]/np.max(self.filt_dict[filt][:,1])>0.5])
             self.wav_max[i] = np.max(self.filt_dict[filt][:,0][self.filt_dict[filt][:,1]/np.max(self.filt_dict[filt][:,1])>0.5])
+        self.wav *= u.angstrom
+        self.wav_min *= u.angstrom
+        self.wav_max *= u.angstrom
 
     def resample_filter_curves(self, wavelengths):
         """ Resamples the filter curves onto a new set of wavelengths
@@ -114,7 +96,7 @@ class Filters(object):
                                               self.filt_dict[filt][:, 1],
                                               left=0, right=0)
 
-    def get_photometry(self, sed: SED):
+    def get_photometry(self, sed: SED, which: str = 'fnu'):
         """ Calculates photometric fluxes. The filters are first re-
         sampled onto the same wavelength grid with transmission values
         blueshifted by (1+z). This is followed by an integration over
@@ -149,7 +131,7 @@ class Filters(object):
                                         left=0, right=0)
 
         # Calculate numerator of expression
-        flux = np.expand_dims(sed.fnu*self.widths*self.wavelengths, axis=1)
+        flux = np.expand_dims(getattr(sed, which)*self.widths*self.wavelengths, axis=1)
         flux = np.sum(flux*filters_z, axis=0)
 
         # Calculate denominator of expression

@@ -11,7 +11,7 @@ c = c.to(u.angstrom*u.Hz).value
 
 from .. import config
 from ..utils.sed import SED
-from .base_models import *
+from .base import *
 from ..console import setup_logger
 
 class PowerlawAccrectionDiskModel(BaseFunctionalModel, BaseSourceModel):

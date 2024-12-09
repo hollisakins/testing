@@ -25,6 +25,7 @@ import spectres
 
 from .. import config
 from . import utils
+from .filters import Filters
 border_chars = config.border_chars
 from brisket.console import setup_logger
 
@@ -65,7 +66,7 @@ class SED:
     
     def __init__(self, 
                 #  wav_rest: Iterable[float], 
-                #  redshift: float = 0, 
+                 redshift: float | None = None, 
                  verbose: bool = True, 
                  units: bool = True, 
                  **kwargs):
@@ -74,71 +75,108 @@ class SED:
         else:
             self.logger = setup_logger(__name__, 'WARNING')
 
+
         self.units = units
         self.redshift = redshift
-        self.luminosity_distance = config.cosmo.luminosity_distance(self.redshift).to(u.pc)
-        if self.redshift == 0:
-            self.luminosity_distance = 10 * u.pc
-        if not units:
-            self.luminosity_distance = self.luminosity_distance.value
+        if self.redshift is not None:
+            if self.redshift == 0:
+                self.luminosity_distance = 10 * u.pc
+            else:
+                self.luminosity_distance = config.cosmo.luminosity_distance(self.redshift).to(u.pc)
+            if not units:
+                self.luminosity_distance = self.luminosity_distance.value
+        else:
+            self.luminosity_distance = NotImplemented
+        
 
-        self.wav_rest = wav_rest
-        self.x_keys = ['wav_rest', 'wav_obs', 'freq_rest', 'freq_obs', 'energy_rest', 'energy_obs']
-        self.x_specs = [kwargs.get(k, None) for k in self.x_keys]
-        if sum(x is not None for x in self.x_specs) != 1:
+        self._x_keys = ['wav_rest', 'wav_obs', 'freq_rest', 'freq_obs', 'energy_rest', 'energy_obs', 'filters']
+        self._x_defs = [k in kwargs for k in self._x_keys]
+        if sum(self._x_defs) != 1:
             self.logger.error(f"""Must supply exactly one specification of the SED 
                                   wavelength/frequency/energy axis. 
-                                  Options are: {self.x_keys}""")
+                                  Options are: {self._x_keys}""")
             sys.exit()
-        self._which_x = [x is not None for x in self.x_specs].index(True)
-        self._which_x_str = self.x_keys[self._which_x]
 
-        self.y_keys = ['Llam', 'Lnu', 'flam', 'fnu', 'nuLnu', 'lamLlam', 'nufnu', 'lamflam']
-        self.y_specs = [kwargs.get(k, None) for k in self.flux_keys]
-        if sum(x is not None for x in self.y_specs) == 0:
-            self.logger.info('No flux/luminosity information provided, populating with zeros. If this is intended, you can ignore this message.')
-            self.y_specs[0] = np.zeros(len(self._x))
-            self._which_y = 0
+        self._x_key = self._x_keys[self._x_defs.index(True)]
+        self._x = kwargs.get(self._x_key)
+
+        if self._x_key == 'filters':
+
+            if isinstance(self._x, Filters):
+                self.filters = self._x
+            elif isinstance(self._x, (list,np.ndarray)):
+                self.filters = Filters(self._x)
+            else:
+                raise Exception
+            self._x = self.filters.wav
+            self._x_key = 'wav_obs'
+        else:
+            self.filters = None
+            
         
-        elif sum(x is not None for x in self.y_specs) != 1:
+        self._y_keys = ['Llam', 'Lnu', 'flam', 'fnu', 'nuLnu', 'lamLlam', 'nufnu', 'lamflam']
+        self._y_defs = [k in kwargs for k in self._y_keys]
+        if sum(self._y_defs) == 0:
+            self.logger.info('No flux/luminosity information provided, populating with zeros. If this is intended, you can ignore this message.')
+            self._y = np.zeros(len(self._x))
+            self._y_key = self._y_keys[0]
+        
+        elif sum(self._y_defs) != 1:
             self.logger.error("Must supply at most one specification of the SED fluxes"); sys.exit()
         
         else:
-            self._which_y = [x is not None for x in self.y_specs].index(True)
-        self._which_y_str = self.y_keys[self._which_y]
+            self._y_key = self._y_keys[self._y_defs.index(True)]
+            self._y = kwargs.get(self._y_key)
+            
+            
+        
+        self._yerr_keys = ['err','error','Llam_err', 'Lnu_err', 'flam_err', 'fnu_err', 'nuLnu_err', 'lamLlam_err', 'nufnu_err', 'lamflam_err']
+        self._yerr_defs = [k in kwargs for k in self._yerr_keys]
+        if sum(self._yerr_defs) == 0:
+            self.logger.info('No flux/luminosity error information provided, populating with zeros. If this is intended, you can ignore this message.')
+            self._yerr = np.zeros(len(self._x))
+            self._yerr_key = self._yerr_keys[0]
+
+        elif sum(self._yerr_defs) != 1:
+            self.logger.error("Must supply at most one specification of the SED fluxes"); sys.exit()
+        
+        else:
+            self._yerr_key = self._yerr_keys[self._yerr_defs.index(True)]
+            self._yerr = kwargs.get(self._yerr_key)
+            
 
         if units:
-            x_default_units = [config.default_wav_unit]*2 + [config.default_freq_unit]*2 + [config.default_energy_unit]*2
-            for i in range(len(self.x_keys)):
-                if self.x_specs[i] is not None:
-                    if not hasattr(self.x_specs[i], "unit"):
-                        self.logger.info(f"No units specified for {self.x_keys[i]}, adopting default ({x_default_units[i]})")
-                        self.x_specs[i] *= x_default_units[i]
+            x_default_units = {'wav_rest':config.default_wavelength_unit, 
+                               'wav_obs':config.default_wavelength_unit,
+                               'freq_rest':config.default_frequency_unit,
+                               'freq_obs':config.default_frequency_unit,
+                               'energy_rest':config.default_energy_unit,
+                               'energy_obs':config.default_energy_unit}
+            if not hasattr(self._x, "unit"):
+                self.logger.info(f"No units specified for {self._x_key}, adopting default ({x_default_units[self._x_key]})")
+                self._x *= x_default_units[self._x_key]
 
-            y_default_units = [config.default_Llam_unit, config.default_Lnu_unit, config.default_flam_unit, config.default_fnu_unit, config.default_lum_unit, config.default_lum_unit, config.default_flux_unit, config.default_flux_unit]
-            for i in range(len(self.y_keys)):
-                if self.y_specs[i] is not None:
-                    if not hasattr(self.y_specs[i], "unit"):
-                        self.logger.info(f"No units specified for {self.y_keys[i]}, adopting default ({y_default_units[i]})")
-                        self.y_specs[i] *= y_default_units[i]
+            y_default_units = {'Llam': config.default_Llam_unit, 
+                               'Lnu': config.default_Lnu_unit, 
+                               'flam': config.default_flam_unit, 
+                               'fnu': config.default_fnu_unit, 
+                               'nuLnu': config.default_lum_unit, 
+                               'lamLlam': config.default_lum_unit, 
+                               'nufnu': config.default_flux_unit, 
+                               'lamflam': config.default_flux_unit}
+
+            if not hasattr(self._y, "unit"):
+                self.logger.info(f"No units specified for {self._y_key}, adopting default ({y_default_units[self._y_key]})")
+                self._y *= y_default_units[self._y_key]
+
+            if not hasattr(self._yerr, "unit"):
+                self.logger.info(f"No units specified for {self._yerr_key}, adopting default ({y_default_units[self._y_key]})")
+                self._yerr *= y_default_units[self._y_key]
+
+            # TODO handle case where units are provided for y but not yerr
 
             self._x_unit = self._x.unit
             self._y_unit = self._y.unit
-
-    @property
-    def _x(self):
-        '''Used internally, alias for the wavelength specification defined at construction'''
-        return self.x_specs[self._which_x]
-
-    @property
-    def _y(self):
-        '''Used internally, alias for the flux specification defined at construction'''
-        return self.y_specs[self._which_y]
-
-    @_y.setter
-    def _y(self, value):
-        '''Allows _y to be set directly'''
-        self.flux_specs[self._which] = value
 
     def __getitem__(self, indices):
         '''Allows access to the flux array via direct indexing of the SED object'''
@@ -153,33 +191,54 @@ class SED:
     @property 
     def wav_rest(self) -> u.Quantity | np.ndarray:
         '''Rest-frame wavelengths'''
-        if self._which_x_str=='wav_rest': 
+        if self._x_key=='wav_rest': 
             return self._x
-        elif self._which_x_str=='wav_obs': 
+        elif self._x_key=='wav_obs': 
             if self.redshift is None:
                 return NotImplemented
             return self._x / (1+self.redshift)
-        elif self._which_x_str=='freq_rest': 
+        elif self._x_key=='freq_rest': 
             if not self.units:
                 return NotImplemented
             return (speed_of_light/self._x).to(config.default_wavelength_unit)
-        elif self._which_x_str=='freq_obs': 
+        elif self._x_key=='freq_obs': 
             if self.redshift is None or not self.units:
                 return NotImplemented
-            return (speed_of_light/self._x/(1+self.redshift)).to(config.default_wavelength_unit)
-        elif self._which_x_str=='energy_rest': 
+            return (speed_of_light/(self._x/(1+self.redshift))).to(config.default_wavelength_unit)
+        elif self._x_key=='energy_rest': 
             if not self.units:
                 return NotImplemented
             return (plancks_constant * speed_of_light / self._x).to(config.default_wavelength_unit)
-        elif self._which_x_str=='energy_obs': 
+        elif self._x_key=='energy_obs': 
             if self.redshift is None or not self.units:
                 return NotImplemented
             return (plancks_constant * speed_of_light / self._x / (1+self.redshift)).to(config.default_wavelength_unit)
 
     @property 
-    def wav_obs(self) -> u.Quantity:
+    def wav_obs(self) -> u.Quantity | np.ndarray:
         '''Observed-frame wavelengths'''
-        return self.wav_rest * (1+self.redshift)
+        if self._x_key=='wav_rest': 
+            if self.redshift is None:
+                return NotImplemented
+            return self._x * (1+self.redshift)
+        elif self._x_key=='wav_obs': 
+            return self._x
+        elif self._x_key=='freq_rest': 
+            if self.redshift is None or not self.units:
+                return NotImplemented
+            return (speed_of_light/(self._x*(self.redshift))).to(config.default_wavelength_unit)
+        elif self._x_key=='freq_obs': 
+            if not self.units:
+                return NotImplemented
+            return (speed_of_light/self._x).to(config.default_wavelength_unit)
+        elif self._x_key=='energy_rest': 
+            if not self.units:
+                return NotImplemented
+            return NotImplemented
+        elif self._x_key=='energy_obs': 
+            if self.redshift is None or not self.units:
+                return NotImplemented
+            return NotImplemented
 
     @property 
     def freq_rest(self) -> u.Quantity:
@@ -204,18 +263,38 @@ class SED:
         '''
         Spectral flux density in terms of flux per unit frequency. Automatically converts from the flux specification defined at construction.
         '''
-        if self._which_str=='fnu':
+        if self._y_key=='fnu':
             return (self._y).to(config.default_fnu_unit)
-        elif self._which_str=='flam':
+        elif self._y_key=='flam':
             return (self._y * self.wav_obs**2 / speed_of_light).to(config.default_fnu_unit)
-        elif self._which_str=='Lnu':
+        elif self._y_key=='Lnu':
             return (self._y / (4*np.pi*self.luminosity_distance**2)).to(config.default_fnu_unit)
-        elif self._which_str=='Llam':
+        elif self._y_key=='Llam':
             return (self._y / (4*np.pi*self.luminosity_distance**2) * self.wav_obs**2 / speed_of_light).to(config.default_fnu_unit)
-        elif self._which_str=='L':
+        elif self._y_key=='L':
             return (self._y / self.nu_obs / (4*np.pi*self.luminosity_distance**2)).to(config.default_fnu_unit)
-        elif self._which_str=='f':
+        elif self._y_key=='f':
             return (self._y / self.nu_obs).to(config.default_fnu_unit)
+        else:
+            raise Exception
+
+    @property
+    def fnu_err(self):
+        '''
+        Spectral flux density in terms of flux per unit frequency. Automatically converts from the flux specification defined at construction.
+        '''
+        if self._y_key=='fnu':
+            return (self._yerr).to(config.default_fnu_unit)
+        elif self._y_key=='flam':
+            return (self._yerr * self.wav_obs**2 / speed_of_light).to(config.default_fnu_unit)
+        elif self._y_key=='Lnu':
+            return (self._yerr / (4*np.pi*self.luminosity_distance**2)).to(config.default_fnu_unit)
+        elif self._y_key=='Llam':
+            return (self._yerr / (4*np.pi*self.luminosity_distance**2) * self.wav_obs**2 / speed_of_light).to(config.default_fnu_unit)
+        elif self._y_key=='L':
+            return (self._yerr / self.nu_obs / (4*np.pi*self.luminosity_distance**2)).to(config.default_fnu_unit)
+        elif self._y_key=='f':
+            return (self._yerr / self.nu_obs).to(config.default_fnu_unit)
         else:
             raise Exception
     
@@ -224,46 +303,85 @@ class SED:
         '''
         Spectral flux density in terms of flux per unit wavelength. Automatically converts from the flux specification defined at construction.
         '''
-        if self._which_str=='fnu':
+        if self._y_key=='fnu':
             return (self._y / self.wav_obs**2 * speed_of_light).to(config.default_flam_unit)
-        elif self._which_str=='flam':
+        elif self._y_key=='flam':
             return (self._y).to(config.default_flam_unit)
-        elif self._which_str=='Lnu':
+        elif self._y_key=='Lnu':
             return (self._y / (4*np.pi*self.luminosity_distance**2) / self.wav_obs**2 * speed_of_light).to(config.default_flam_unit)
-        elif self._which_str=='Llam':
+        elif self._y_key=='Llam':
             return (self._y / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
-        elif self._which_str=='L':
+        elif self._y_key=='L':
             return (self._y / self.lam_obs / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
-        elif self._which_str=='f':
+        elif self._y_key=='f':
             return (self._y / self.lam_obs).to(config.default_flam_unit)
+        else:
+            raise Exception
+    
+    @property
+    def Llam(self):
+        '''
+        Spectral flux density in terms of flux per unit wavelength. Automatically converts from the flux specification defined at construction.
+        '''
+        if self._y_key=='fnu':
+            pass
+        elif self._y_key=='flam':
+            pass # return (self._y).to(config.default_flam_unit)
+        elif self._y_key=='Lnu':
+            return (self._y / self.wav_obs**2 * speed_of_light).to(config.default_Llam_unit)
+        elif self._y_key=='Llam':
+            return self._y
+            # return (self._y / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
+        elif self._y_key=='L':
+            pass # return (self._y / self.lam_obs / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
+        elif self._y_key=='f':
+            pass # return (self._y / self.lam_obs).to(config.default_flam_unit)
         else:
             raise Exception
 
     #TODO define flam, Lnu, etc
 
     #################################################################################
-    def resample(self, new_wavs, fill=0):
+    def resample(self, fill=0, **kwargs):
+        _x_defs = [k in kwargs for k in self._x_keys]
+        if sum(self._x_defs) != 1:
+            self.logger.error(f"""Resample: Must supply exactly one specification 
+                                  of the wavelength/frequency/energy axis. 
+                                  Options are: {self._x_keys}""")
+            sys.exit()
+
+        _new_x_key = self._x_keys[_x_defs.index(True)]
+        _new_x = kwargs.get(_new_x_key)
+        _old_x = getattr(self, _new_x_key)
+    
         if self.units:
-            self._y = spectres.spectres(new_wavs.to(self.wav_rest.unit).value, self.wav_rest.value, self._y.value, fill=fill, verbose=False) * self._y.unit
+            self._y = spectres.spectres(_new_x.value, _old_x.to(_new_x.unit).value, self._y.value, fill=fill, verbose=False) * self._y.unit
         else:
-            self._y = spectres.spectres(new_wavs, self.wav_rest, self._y, fill=fill, verbose=False)
-        self.wav_rest = new_wavs
+            self._y = spectres.spectres(_new_x, _old_x, self._y, fill=fill, verbose=False)
+        
+        self._x = _new_x
+        self._x_key = _new_x_key
         return self._y
 
     def __repr__(self):
         if self.units:
             all_flux_defs = ['fnu','flam','Lnu','Llam','nufnu','lamflam','nuLnu','lamLlam']
-            w = self.wav_rest.value
-            f = self._y.value
-            wstr = f'wav_rest: [{w[0]:.2f}, {w[1]:.2f}, ..., {w[-2]:.2f}, {w[-1]:.2f}] {self.wav_rest.unit} {np.shape(w)}'
-            if np.ndim(f) > 1:
-                fstr1 = f'{self._which_str} (base): [...] {self._y.unit} {np.shape(f)}'
-                fstr2 = '(available) ' + ', '.join(map(str,[a for a in all_flux_defs if a != self._which_str])) 
+            if self.filters is not None:
+                wstr = f'filters: {", ".join(self.filters.nicknames)} {np.shape(self._x)}'
+            else:
+                wstr = f'{self._x_key}: [{self._x.value[0]:.2f}, {self._x.value[1]:.2f}, ..., {self._x.value[-2]:.2f}, {self._x.value[-1]:.2f}] {self._x_unit} {np.shape(self._x)}'
+            if np.ndim(self._y) > 1:
+                fstr1 = f'{self._y_key} (base): [...] {self._y_unit} {np.shape(self._y)}'
+                fstr2 = '(available) ' + ', '.join(map(str,[a for a in all_flux_defs if a != self._y_key])) # TODO add check for flux_defs being implemented 
                 betastr = f'beta: ?, Muv: ?, Lbol: ?'
             else:
-                fstr1 = f'{self._which_str} (base): [{f[0]:.2f}, {f[1]:.2f}, ..., {f[-2]:.2f}, {f[-1]:.2f}] {self._y.unit} {np.shape(f)}'
-                fstr2 = '(available) ' + ', '.join(map(str,[a for a in all_flux_defs if a != self._which_str])) 
-                betastr = f'beta: {self.beta:.2f}, Muv: {self.Muv:.1f}, Lbol: ?'
+                if len(self._y) > 4:
+                    fstr1 = f'{self._y_key} (base): [{self._y.value[0]:.2f}, {self._y.value[1]:.2f}, ..., {self._y.value[-2]:.2f}, {self._y.value[-1]:.2f}] {self._y_unit} {np.shape(self._y)}'
+                else:
+                    fstr1 = f'{self._y_key} (base): [{self._y.value[0]:.2f}, {self._y.value[1]:.2f}, ..., {self._y.value[-2]:.2f}, {self._y.value[-1]:.2f}] {self._y_unit} {np.shape(self._y)}'
+                fstr2 = '(available) ' + ', '.join(map(str,[a for a in all_flux_defs if a != self._y_key])) # TODO add check for flux_defs being implemented 
+                betastr = f'beta: ?, Muv: ?, Lbol: ?'
+                # betastr = f'beta: {self.beta:.2f}, Muv: {self.Muv:.1f}, Lbol: ?'
             width = config.cols-2
         else:
             all_flux_defs = ['fnu','flam','Lnu','Llam','nufnu','lamflam','nuLnu','lamLlam']
@@ -319,19 +437,18 @@ class SED:
         return self.__repr__()
 
     def __add__(self, other: SED) -> SED:
-        if not np.all(other.wav_rest==self.wav_rest):
-            other.resample(self.wav_rest)
+        if not np.all(other._x==self._x):
+            other.resample(**{self._x_key:self._x})
         
         if self.units:
-            newobj = SED(self.wav_rest, redshift=self.redshift, verbose=False)
-            setattr(newobj, '_which_str', self._which_str)
-            setattr(newobj, '_y', self._y + getattr(other, self._which_str))
+            newobj = SED(**{self._x_key:self._x}, redshift=self.redshift, verbose=False)
+            newobj._y_key = self._y_key
+            newobj._y = self._y + getattr(other, self._y_key)
         else:
-            newobj = SED(self.wav_rest, redshift=self.redshift, verbose=False, units=False)
-            setattr(newobj, '_which', self._which)
-            setattr(newobj, '_which_str', self._which_str)
-            setattr(newobj, '_y', self._y + other._y)
-
+            newobj = SED(**{self._x_key:self._x}, redshift=self.redshift, verbose=False, units=False)
+            newobj._y_key = self._y_key
+            newobj._y = self._y + getattr(other, self._y_key)
+            
         return newobj
     
     def __mul__(self, other: int | float | np.ndarray) -> SED: 
@@ -435,9 +552,10 @@ class SED:
     def plot(self, ax: mpl.axes.Axes = None, 
              x: str = 'wav_rest', 
              y: str = 'fnu', 
+             yerr: str = None,
              step: bool = False, 
-             xscale: str = 'linear',
-             yscale: str = 'linear',
+             xscale: str = None,
+             yscale: str = None,
              xunit: str | u.Unit = None,
              yunit: str | u.Unit = None,
              xlim: tuple[float,float] = None, 
@@ -486,7 +604,10 @@ class SED:
         
 
         x_plot = getattr(self, x)
-        y_plot = getattr(self, y)     
+        y_plot = getattr(self, y)    
+        if yerr is not None:
+            yerr_plot = getattr(self, yerr) 
+
         if xlim is None:
             xmin, xmax = np.min(x_plot), np.max(x_plot)
         else:
@@ -556,15 +677,21 @@ class SED:
                 fig = plt.gcf()
                 fig.canvas.draw()
 
-            if step:
-                ax.step(x_plot, y_plot, where='mid', **kwargs)
+            if yerr is None:
+                if step:
+                    ax.step(x_plot, y_plot, where='mid', **kwargs)
+                else:
+                    ax.plot(x_plot, y_plot, **kwargs)
             else:
-                ax.plot(x_plot, y_plot, **kwargs)
+                if step:
+                    ax.step(x_plot, y_plot, where='mid', **kwargs)
+                    # ax.errorbar(...)
+                else:
+                    ax.errorbar(x_plot, y_plot, yerr=yerr_plot, **kwargs)
             ax.set_ylabel(ylabel)
             ax.set_xlabel(xlabel)
 
-            ax.set_xscale(xscale)
-            ax.set_yscale(yscale)
+
 
             if eng:
                 ax.xaxis.set_major_formatter(mpl.ticker.EngFormatter(unit='m', places=1))
@@ -573,6 +700,10 @@ class SED:
                 ax.set_xlim(*xlim)
             if ylim is not None:
                 ax.set_ylim(*ylim)
+            if xscale is not None:
+                ax.set_xscale(xscale)
+            if yscale is not None:
+                ax.set_yscale(yscale)
 
             if show:
                 plt.show()
@@ -628,3 +759,5 @@ class SED:
         newobj = deepcopy(self)
         newobj._y = np.transpose(self._y)
         return newobj
+
+        

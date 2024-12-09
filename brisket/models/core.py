@@ -21,7 +21,7 @@ import astropy.units as u
 from .. import config
 from ..utils.sed import SED
 from ..console import setup_logger
-from ..fitting.observation import Observation, Photometry, Spectrum
+from ..observation import Observation, Photometry, Spectrum
 
 
 # from brisket import utils
@@ -76,6 +76,11 @@ class Model(object):
         self.params = deepcopy(params)
         self.obs = obs
 
+        if self.params.ndim > 0:
+            e = ValueError('Cannot create a model with free parameters. Please provide a set of fixed parameters.')
+            self.logger.error(e)
+            raise e
+
         assert 'redshift' in self.params, "Redshift must be specified for any model"
         self.redshift = float(self.params['redshift'])
         if self.redshift > config.max_redshift:
@@ -123,14 +128,9 @@ class Model(object):
         # Compute the internal full SED 
         self.compute_sed()
 
-        # If photometric output, compute photometry
-        if self.phot_output:
-            self._photometry = self.compute_photometry(self._sed)
-
-        # If spectroscopic output, compute spectrum
-        if self.spec_output:
-            self._spectrum = self.compute_spectrum(self._sed)
-
+        # Compute observables
+        self.compute_observables()
+        
 
     def compute_sed(self):
         """ This method is the primary workhorse for ModelGalaxy. It combines the 
@@ -139,7 +139,7 @@ class Model(object):
         The compute_photometry and compute_spectrum methods generate observables 
         using this internal full spectrum. """
 
-        self._sed = SED(self.wavelengths, redshift=self.redshift, verbose=self.verbose, units=False)
+        self._sed = SED(wav_rest=self.wavelengths, redshift=self.redshift, verbose=self.verbose, units=False)
 
         # TODO define the order of operations for the components -- sources must come first, then reprocessors, then absorbers 
         # also dust/nebular reprocessors may need to occur in a certain order... 
@@ -190,7 +190,8 @@ class Model(object):
             R = np.zeros_like(R_wav) + R_default
 
             for phot in self.obs.phot_list:
-                in_phot_range = (R_wav > phot.wav_range[0]/(1+config.max_redshift) * (1-25*sig/len(R_wav))) & (R_wav < phot.wav_range[1]/(1+config.min_redshift) * (1+25*sig/len(R_wav)))
+                wav_range = (phot.wav_range[0].to(u.angstrom).value, phot.wav_range[1].to(u.angstrom).value)
+                in_phot_range = (R_wav > wav_range[0]/(1+config.max_redshift) * (1-25*sig/len(R_wav))) & (R_wav < wav_range[1]/(1+config.min_redshift) * (1+25*sig/len(R_wav)))
                 R[(in_phot_range)&(R<phot.R*20)] = phot.R*20
             for spec in self.obs.spec_list:
                 in_spec_range = (R_wav > spec.wav_range[0]/(1+config.max_redshift) * (1-25*sig/len(R_wav))) & (R_wav < spec.wav_range[1]/(1+config.min_redshift) * (1+25*sig/len(R_wav)))
@@ -228,7 +229,15 @@ class Model(object):
         self.logger.info('Computing observables')
         self.prediction = Observation()
         for phot in self.obs.phot_list:
-            self.prediction.add_phot(filters=phot.filters, fluxes=phot.filters.get_photometry(self.sed))
+            if phot._y_key in ['fnu', 'flam']:
+                k = phot._y_key
+            else:
+                self.logger.info('No reference observed photometry, providing prediction in fnu units')
+                k = 'fnu'
+            f = phot.filters.get_photometry(self.sed, which=k)
+            args = {'filters': phot.filters, k: f, 'redshift': self.redshift}
+            self.prediction.add_phot(**args)
+            
         for spec in self.obs.spec_list:
             # .. apply spectral calibration here
             spectrum = deepcopy(self.sed)
@@ -236,8 +245,14 @@ class Model(object):
             #     model = comp_params.model
             #     if model.type == 'calibration':
             #         spectrum = model.apply(comp_params, self.spec_wavs, spectrum)
-            spectrum.resample(spec.wavs/(1+self.redshift))
-            self.prediction.add_spec(wavs=spec.wavs, fluxes=spectrum)
+            spectrum.resample(wav_obs=spec.wavs)
+            
+            args = {'wavs': spec.wavs}
+            if spec.flux is not None: # if spec has flux, error:
+                args[spec._y_key] = getattr(sed, spec._y_key) # then make sure to adopt the same flux specification
+            else:
+                args['fnu'] = spectrum.fnu
+            self.prediction.add_spec(**args) 
         
     @property
     def phot(self):
@@ -249,49 +264,48 @@ class Model(object):
 
 
 
-    def compute_spectrum(self, sed):
-        """ This method generates predictions for observed spectroscopy.
-        It optionally applies a Gaussian velocity dispersion then
-        resamples onto the specified set of observed wavelengths. """
+    # def compute_spectrum(self, sed):
+    #     """ This method generates predictions for observed spectroscopy.
+    #     It optionally applies a Gaussian velocity dispersion then
+    #     resamples onto the specified set of observed wavelengths. """
 
-        # if "veldisp" in self.parameters:
-        #     vres = 3*10**5/config.R_spec/2.
-        #     sigma_pix = model_comp["veldisp"]/vres
-        #     k_size = 4*int(sigma_pix+1)
-        #     x_kernel_pix = np.arange(-k_size, k_size+1)
+    #     # if "veldisp" in self.parameters:
+    #     #     vres = 3*10**5/config.R_spec/2.
+    #     #     sigma_pix = model_comp["veldisp"]/vres
+    #     #     k_size = 4*int(sigma_pix+1)
+    #     #     x_kernel_pix = np.arange(-k_size, k_size+1)
 
-        #     kernel = np.exp(-(x_kernel_pix**2)/(2*sigma_pix**2))
-        #     kernel /= np.trapz(kernel)  # Explicitly normalise kernel
+    #     #     kernel = np.exp(-(x_kernel_pix**2)/(2*sigma_pix**2))
+    #     #     kernel /= np.trapz(kernel)  # Explicitly normalise kernel
 
-        #     spectrum = np.convolve(self.spectrum_full, kernel, mode="valid")
-        #     wav_obs = (1+self.redshift) * self.wavelengths[k_size:-k_size]
+    #     #     spectrum = np.convolve(self.spectrum_full, kernel, mode="valid")
+    #     #     wav_obs = (1+self.redshift) * self.wavelengths[k_size:-k_size]
 
-        # else:
+    #     # else:
 
-        # if self.calib:
-        #     if self.calib.R_curve is not None:
-        #         self.logger.debug(f"Convolving output spectrum using provided R_curve")
-        #         wav_obs, sed = self.calib.convolve_R_curve(wav_obs, sed, self.parameters['calib']['f_LSF'])
+    #     # if self.calib:
+    #     #     if self.calib.R_curve is not None:
+    #     #         self.logger.debug(f"Convolving output spectrum using provided R_curve")
+    #     #         wav_obs, sed = self.calib.convolve_R_curve(wav_obs, sed, self.parameters['calib']['f_LSF'])
 
-        spectrum = deepcopy(sed)
+    #     spectrum = deepcopy(sed)
 
-        for comp_name, comp_params in self.components.items():
-            model = comp_params.model
-            if model.type == 'calibration':
-                spectrum = model.apply(comp_params, self.spec_wavs, spectrum)
+    #     for comp_name, comp_params in self.components.items():
+    #         model = comp_params.model
+    #         if model.type == 'calibration':
+    #             spectrum = model.apply(comp_params, self.spec_wavs, spectrum)
         
-        spectrum.resample(self._spec_wavs/(1+self.redshift))
+    #     spectrum.resample(self._spec_wavs/(1+self.redshift))
 
-
-        return spectrum
+    #     return spectrum
 
     @property
     def sed(self):
-        return SED(wav_rest=self.wavelengths, Llam=self._sed._y, redshift=self.redshift, verbose=False)
+        return SED(wav_rest=self.wavelengths * u.angstrom, Llam=self._sed._y * u.Lsun/u.angstrom, redshift=self.redshift, verbose=False)
 
-    @property
-    def spectrum(self):
-        return SED(wav_rest=self._spec_wavs/(1+self.redshift)*u.angstrom, Llam=self._spectrum._y, redshift=self.redshift, verbose=False)
+    # @property
+    # def spectrum(self):
+    #     return SED(wav_rest=self._spec_wavs/(1+self.redshift)*u.angstrom, Llam=self._spectrum._y, redshift=self.redshift, verbose=False)
 
     @property
     def photometry(self):

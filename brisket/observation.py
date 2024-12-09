@@ -53,10 +53,11 @@ import numpy as np
 import sys, os
 from rich.tree import Tree
 import astropy.units as u
-from ..utils.filters import Filters
-from .. import utils
-from .. import config
-from ..console import setup_logger
+from .utils.filters import Filters
+from . import utils
+from . import config
+from .console import setup_logger
+from .utils import SED
 
 
 
@@ -77,7 +78,10 @@ class Observation:
 
     """
 
-    def __init__(self, verbose=False):
+    def __init__(self, 
+                 ID: str | int = None, 
+                 verbose: bool = False):
+        self.ID = ID
         self._phot = []
         self._spec = []
 
@@ -87,10 +91,6 @@ class Observation:
             self.logger = setup_logger(__name__, 'WARNING')
 
         pass
-    
-    @property
-    def data(self):
-        return {'phot':self.phot, 'spec':self.spec}
     
     @property
     def phot_list(self):
@@ -139,17 +139,21 @@ class Observation:
         self._spec.append(spec)
 
 
-class Photometry(Observation):
+class Photometry(SED):
 
     def __init__(self, 
                  filters: list | np.ndarray | brisket.filters.Filters, 
-                 fluxes: list | np.ndarray | u.Quantity = None, 
-                 errors: list | np.ndarray | u.Quantity = None, 
-                 flux_unit: str | u.Unit = 'uJy'):
+                 fnu: list | np.ndarray | u.Quantity = None, 
+                 fnu_err: list | np.ndarray | u.Quantity = None, 
+                 flam: list | np.ndarray | u.Quantity = None, 
+                 flam_err: list | np.ndarray | u.Quantity = None, 
+                 fnu_units: str | u.Unit = 'uJy',
+                 flam_units: str | u.Unit = 'ergscm2a', 
+                 verbose: bool = False, **kwargs):
         
         self.filters = filters
-        self.fluxes = fluxes
-        self.errors = errors
+        # self.fluxes = fluxes
+        # self.errors = errors
 
         if not isinstance(self.filters, Filters):
             self.filters = Filters(self.filters)
@@ -158,7 +162,29 @@ class Photometry(Observation):
         self.wav_min = self.filters.wav_min
         self.wav_max = self.filters.wav_max
 
-        pass
+        if fnu is not None:
+            if not hasattr(fnu, 'unit'):
+                if isinstance(fnu_units, str):
+                    fnu_units = utils.unit_parser(fnu_units)
+                fnu *= fnu_units
+            if fnu_err is not None:
+                fnu_err *= fnu_units
+                args = {'filters':self.filters, 'fnu':fnu, 'fnu_err':fnu_err, 'verbose':verbose, 'units':True}
+            else:
+                args = {'filters':self.filters, 'fnu':fnu, 'verbose':verbose, 'units':True}
+        elif flam is not None:
+            if not hasattr(flam, 'unit'):
+                if isinstance(flam_units, str):
+                    flam_units = utils.unit_parser(flam_units)
+                flam *= flam_units
+            if flam_err is not None:
+                flam_err *= fnu_units
+                args = {'filters':self.filters, 'flam':flam, 'flam_err':flam_err, 'verbose':verbose, 'units':True}
+            else:
+                args = {'filters':self.filters, 'flam':flam, 'verbose':verbose, 'units':True}
+        else:
+            args = {'filters':self.filters, 'verbose':verbose, 'units':True}
+        super().__init__(**args, **kwargs)
 
     @property
     def R(self):
@@ -173,38 +199,9 @@ class Photometry(Observation):
     def __len__(self):
         return len(self.filters)
 
-    def __repr__(self):
-        out = ''
-        if self.fluxes is None:
-            return self.filters.__repr__()
-        if self.errors is None:
-            for i in range(len(self)):
-                out += f'{self.filters.nicknames[i]}: {self.fluxes[i]} \n'
-        else:
-            for i in range(len(self)):
-                out += f'{self.filters.nicknames[i]}: {self.fluxes[i]} +/- {self.errors[i]} \n'
-        return out
-        # tree = Tree(f"[bold italic white]Params[/bold italic white](nparam={self.nparam}, ndim={self.ndim})")
-        # self.filters.filter_nicknames
-        # comps = list(self.components.keys())
-        # names = [n for n in self.all_param_names if '/' not in n]
-        # for name in names:
-        #     tree.add('[bold #FFE4B5 not italic]' + name + '[white]: [italic not bold #c9b89b]' + self.all_params[name].__repr__())
-        # for comp in comps:
-        #     source = tree.add('[bold #6495ED not italic]' + comp + '[white]: [italic not bold #6480b3]' + self.components[comp].__repr__())#
-        #     params_i = self.components[comp]
-        #     names_i = [n for n in params_i.all_param_names if '/' not in n]
-        #     for name_i in names_i:
-        #         source.add('[bold #FFE4B5 not italic]' + name_i + '[white]: [italic not bold #c9b89b]' + params_i.all_params[name_i].__repr__())
-        #     comps_i = list(params_i.components.keys())
-        #     for comp_i in comps_i:
-        #         subsource = source.add('[bold #8fbc8f not italic]' + comp_i + '[white]: [italic not bold #869e86]' + params_i.components[comp_i].__repr__())
-        #         params_ii = params_i.components[comp_i]
-        #         names_ii = [n for n in params_ii.all_param_names if '/' not in n]
-        #         for name_ii in names_ii:
-        #             subsource.add('[bold #FFE4B5 not italic]' + name_ii + '[white]: [italic not bold #c9b89b]' + params_ii.all_params[name_ii].__repr__())
-        # console.print(tree)
-
+    # def __repr__(self):
+    #     out = ''
+    #     return out
 
 
 
@@ -212,15 +209,34 @@ class Spectrum(Observation):
 
     def __init__(self, 
                  wavs: list | np.ndarray | u.Quantity, 
-                 fluxes: list | np.ndarray | u.Quantity = None,
-                 errors: list | np.ndarray | u.Quantity = None,
-                 mask: list | np.ndarray = None,
                  wav_units: str | u.Unit = None,
-                 flux_units: str | u.Unit = None,
-                 R: int = None):
-
-        self.fluxes = fluxes
-        self.errors = errors
+                 R: int = None,
+                 **kwargs):
+                #  flam: list | np.ndarray | u.Quantity = None,
+                #  err: list | np.ndarray | u.Quantity = None,
+                #  mask: list | np.ndarray = None,
+                #  flux_units: str | u.Unit = None,
+        
+        _y_keys = ['Llam', 'Lnu', 'flam', 'fnu', 'nuLnu', 'lamLlam', 'nufnu', 'lamflam']
+        _y_defs = [k in kwargs for k in _y_keys]
+        if sum(_y_defs)==0:
+            self.flux = None
+            self.err = None
+        elif sum(_y_defs)>1:
+            self.logger.error("Must supply at most one specification spectral flux"); sys.exit()
+        else:
+            self._y_key = _y_keys[_y_defs.index(True)]
+            self.flux = kwargs[self._y_key]
+        
+            _yerr_keys = ['err','error',self._y_key+'_err']
+            _yerr_defs = [k in kwargs for k in _yerr_keys]
+            if sum(_yerr_defs)==0:
+                self.err = None
+            elif sum(_yerr_defs)>1:
+                self.logger.error("Must supply at most one specification spectral error"); sys.exit()
+            else:
+                _yerr_key = _yerr_keys[_yerr_defs.index(True)]
+                self.err = kwargs[_yerr_key]
 
         if hasattr(wavs, 'unit'):
             self.wavs = wavs
@@ -236,25 +252,25 @@ class Spectrum(Observation):
         self._R = R
         # self.errors # apply mask
 
-        if self.fluxes is not None:
+        if self.flux is not None:
             # Remove points at the edges of the spectrum with zero flux.
             startn = 0
-            while self.fluxes[startn] == 0.:
+            while self.flux[startn] == 0.:
                 startn += 1
             endn = 0
-            while self.fluxes[-endn-1] == 0.:
+            while self.flux[-endn-1] == 0.:
                 endn += 1
             if endn == 0:
-                self.fluxes = self.fluxes[startn:]
+                self.flux = self.flux[startn:]
                 self.wavs = self.wavs[startn:]
             else:
-                self.fluxes = self.fluxes[startn:-endn]
+                self.flux = self.flux[startn:-endn]
                 self.wavs = self.wavs[startn:-endn]
-        if self.errors is not None:
+        if self.err is not None:
             if endn == 0:
-                self.errors = self.errors[startn:]
+                self.err = self.err[startn:]
             else:
-                self.errors = self.errors[startn:-endn]
+                self.err = self.err[startn:-endn]
 
     @property
     def R(self):

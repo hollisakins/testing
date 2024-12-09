@@ -12,7 +12,7 @@ from .. import config
 from ..utils import utils
 from ..utils.sed import SED
 from ..data.grid_manager import GridManager
-from .base_models import *
+from .base import *
 
 class GriddedStellarModel(BaseGriddedModel, BaseSourceModel):
     '''
@@ -89,8 +89,8 @@ class GriddedStellarModel(BaseGriddedModel, BaseSourceModel):
     def _resample(self, wavelengths):
         """ Resamples the raw stellar grids to the input wavs. """
         self.wavelengths = wavelengths
-        self.grid = SED(self.grid_wavelengths, Llam=self.grid, verbose=False, units=False)
-        self.grid.resample(self.wavelengths)
+        self.grid = SED(wav_rest=self.grid_wavelengths, Llam=self.grid, verbose=False, units=False)
+        self.grid.resample(wav_rest=self.wavelengths)
 
 
     def emit(self, params):
@@ -119,8 +119,8 @@ class GriddedStellarModel(BaseGriddedModel, BaseSourceModel):
 
 
         t_bc = float(params['t_bc']) * 1e9
-        young = SED(self.wavelengths, verbose=False, units=False)
-        old = SED(self.wavelengths, verbose=False, units=False)
+        young = SED(wav_rest=self.wavelengths, verbose=False, units=False)
+        old = SED(wav_rest=self.wavelengths, verbose=False, units=False)
 
         index = self.grid_ages[self.grid_ages < t_bc].shape[0]
         old_weight = (self.grid_ages[index] - t_bc)/self.grid_age_widths[index-1]

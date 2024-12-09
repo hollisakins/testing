@@ -2,16 +2,16 @@
 
 from . import core
 
-# from . import stellar_models
-from . import agn_models
-# from . import sfh_models
-from . import igm_models
+from . import stellar
+from . import agn
+from . import sfh
+from . import igm
 from . import calibration
 
-from .stellar_models import GriddedStellarModel
-from .agn_models import PowerlawAccrectionDiskModel
-from .sfh_models import ConstantSFH
-from .igm_models import InoueIGMModel
+from .stellar import GriddedStellarModel
+from .agn import PowerlawAccrectionDiskModel
+from .sfh import ConstantSFH
+from .igm import InoueIGMModel
 from .calibration import SpectralCalibrationModel
 
 

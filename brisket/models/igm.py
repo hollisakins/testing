@@ -8,7 +8,7 @@ import warnings
 from astropy.io import fits
 
 from .. import config
-from .base_models import *
+from .base import *
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:

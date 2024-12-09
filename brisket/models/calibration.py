@@ -10,7 +10,7 @@ import spectres
 
 from .. import utils
 from .. import config
-from .base_models import *
+from .base import *
 
 # should add new parameters called spectrum_corr and sed_corr? or something? 
 
