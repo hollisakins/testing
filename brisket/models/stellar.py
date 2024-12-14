@@ -11,12 +11,17 @@ import astropy.units as u
 from .. import config
 from ..utils import utils
 from ..utils.sed import SED
-from ..data.grid_manager import GridManager
+# from ..data.grid_manager import GridManager
+from ..grids.grids import Grid
 from .base import *
+
 
 class GriddedStellarModel(BaseGriddedModel, BaseSourceModel):
     '''
-    This is the default stellar mdoel in BRISKET, which can take in stellar grids. 
+    The default stellar model in BRISKET. Handles input stellar grids 
+    over a range of metallicities and ages.
+    (TBE) Splits the resulting stellar SED into young and old components,
+    to allow for e.g., extra dust attenuation in the young component.
 
     Args:
         params (brisket.parameters.Params)
@@ -24,32 +29,25 @@ class GriddedStellarModel(BaseGriddedModel, BaseSourceModel):
     '''
     type = 'source'
     order = 0
+    
     def __init__(self, params):
         self.params = params
         
         self._build_defaults(params)
 
-        grid_file_name = str(params['grids'])
-        if not grid_file_name.endswith('.hdf5'):
-            grid_file_name += '.hdf5'
+        self.grid = Grid(str(params['grids']))
+        self.grid.ages[self.grid.ages == 0] = 1
+        self.grid.age_bins = np.power(10., utils.make_bins(np.log10(self.grid.ages), fix_low=-99))
+        self.grid.age_widths = self.grid_age_bins[1:] - self.grid_age_bins[:-1]
 
-        gm = GridManager()
-        gm.check_grid(grid_file_name)
-        grid_path = os.path.join(config.grid_dir, grid_file_name)
-
-        self._load_hdf5_grid(grid_path)
     
-    def _build_defaults(self, params):
+    def build_defaults(self, params):
         if 'grids' not in params:
             params['grids'] = 'bc03_miles_chabrier'
         if 't_bc' not in params:
             params['t_bc'] = 0.01
-        # if 'logMstar' not in params:
-            # params['logMstar'] = 10
-        # if 'zmet' not in params:
-            # params['zmet'] = 0.02
 
-    def _validate_components(self, params):
+    def validate_components(self, params):
         # TODO initialize SFHs
         # stack all the SFH components into one, there's no real point in keeping them separate
         self.sfh_components = {}
@@ -64,34 +62,16 @@ class GriddedStellarModel(BaseGriddedModel, BaseSourceModel):
             elif 'logweight' in comp:
                 self.sfh_weights = [np.power(10., float(comp['logweight'])) for comp in self.params.components.values() if comp.model.type == 'sfh']
 
-    def _load_hdf5_grid(self, grid_path):
-        """ Load the grid from an HDF5 file. """
-
-        with h5py.File(grid_path,'r') as f:
-            self.grid_wavelengths = np.array(f['wavs'])
-            self.grid_metallicities = np.array(f['metallicities'][:])
-            self.grid_ages = np.array(f['ages'])
-            self.grid = np.array(f['grid'])
-            self.grid_live_frac = np.array(f['live_frac'][:])
-
-        self.grid_ages[self.grid_ages == 0] = 1
-        self.grid_age_bins = np.power(10., utils.make_bins(np.log10(self.grid_ages), fix_low=-99))
-        self.grid_age_widths = self.grid_age_bins[1:] - self.grid_age_bins[:-1]
-
-
-    
     def __repr__(self):
-        return f'BaseStellarModel'
+        return f'BaseStellarModel(grid={self.grid.name}, sfh={list(self.sfh_components)})'
     
     def __str__(self):
         return self.__repr__()
 
-    def _resample(self, wavelengths):
+    def resample(self, wavelengths):
         """ Resamples the raw stellar grids to the input wavs. """
         self.wavelengths = wavelengths
-        self.grid = SED(wav_rest=self.grid_wavelengths, Llam=self.grid, verbose=False, units=False)
-        self.grid.resample(wav_rest=self.wavelengths)
-
+        self.grid.resample(self.wavelengths)
 
     def emit(self, params):
     
@@ -112,36 +92,66 @@ class GriddedStellarModel(BaseGriddedModel, BaseSourceModel):
         """
 
         # TODO compute sfh_ceh from input SFH parameters
-        sfh_ceh = np.zeros((len(self.grid_metallicities), len(self.grid_ages)))
+        sfh_ceh_weights = np.zeros(grid.shape)
         for (sfh_name, sfh), sfh_weight in zip(self.sfh_components.items(), self.sfh_weights):
             sfh.update(params[sfh_name], weight=sfh_weight)
-            sfh_ceh += sfh.combined_weights
+            sfh_ceh_weights += sfh.combined_weights
 
-
+        # split the grid into young and old components at t_bc
+        # (have to account for the grid age spacing)
         t_bc = float(params['t_bc']) * 1e9
-        young = SED(wav_rest=self.wavelengths, verbose=False, units=False)
-        old = SED(wav_rest=self.wavelengths, verbose=False, units=False)
-
         index = self.grid_ages[self.grid_ages < t_bc].shape[0]
-        old_weight = (self.grid_ages[index] - t_bc)/self.grid_age_widths[index-1]
-
         if index == 0:
             index += 1
 
-        for i in range(len(self.grid_metallicities)):
-            if sfh_ceh[i, :index].sum() > 0.:
-                sfh_ceh[:, index-1] *= (1. - old_weight)
-                # print(type(self.grid[i, :index, :].T))
-                # print(type(sfh_ceh))
-                young += np.sum(self.grid[i, :index, :].T * sfh_ceh[i, :index].T, axis=1)
-                sfh_ceh[:, index-1] /= (1. - old_weight)
+        grid_young = self.grid[self.grid.age < t_bc]
+        weight_young = (self.grid.age[index] - t_bc)/self.grid_age_widths[index-1]
 
-            if sfh_ceh[i, index-1:].sum() > 0.:
-                sfh_ceh[:, index-1] *= old_weight
-                old += np.sum(self.grid[i, index-1:, :].T * sfh_ceh[i, index-1:].T, axis=1)
-                sfh_ceh[:, index-1] /= old_weight
+        grid_old = self.grid[self.grid.age >= t_bc]
+        weight_old = 1-weight_young
 
-        # if t_bc == 0.:
-            # return spectrum
+        sfh_ceh_young = copy(sfh_ceh[:, :index])
+        sfh_ceh_young[:, index-1] *= weight_young
+        grid_young.collapse(axis=('zmet','age'), weights=sfh_ceh_young, inplace=True)
+        young = grid_young.to_SED()
 
+        sfh_ceh_old = copy(sfh_ceh[:, index-1:])
+        sfh_ceh_old[:, index-1] *= weight_old
+        grid_old.collapse(axis=('zmet','age'), weights=sfh_ceh_old, inplace=True)
+        old = grid_old.to_SED()
+
+        # TODO: build some complexity into the SED class to handle separate young+old components, if specified 
+        # but still handle units properly, with astropy equivalencies 
         return young+old
+
+class SSPModel(BaseGriddedModel, BaseSourceModel):
+    '''
+    A simple stellar population model, which interpolates from 
+    a given stellar grid to the specified age and metallicity (zmet).
+
+    Args:
+        params (brisket.parameters.Params)
+            Model parameters.
+    '''
+    type = 'source'
+    order = 0
+
+    def __init__(self, params):
+        self.params = params
+        # self._build_defaults(params)
+        self.grid = Grid(str(params['grids']))
+
+    def validate_components(self, params):
+        pass
+
+    def resample(self, wavelengths):
+        """ Resamples the raw stellar grids to the input wavs. """
+        self.wavelengths = wavelengths
+        self.grid.resample(self.wavelengths)
+
+    def emit(self, params):
+        self.grid.interpolate({'zmet':0, 'age':0}, inplace=True)
+        # interpolate live_frac
+        # scale to mass: self.grid *= params['massformed']
+        
+        return self.grid.to_SED()

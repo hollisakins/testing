@@ -36,3 +36,7 @@ docs = [
     "furo",
     "nbsphinx",
 ]
+
+
+[project.scripts]
+brisket = "brisket.cli:main_cli"

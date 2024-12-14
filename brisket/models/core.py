@@ -102,15 +102,15 @@ class Model(object):
         self.components = self.params.components
         for comp_name, comp_params in self.components.items(): 
             comp_params.model = comp_params.model(comp_params) # initialize the model
-            comp_params.model._resample(self.wavelengths) # resample the model
+            comp_params.model.resample(self.wavelengths) # resample the model
 
             subcomps = comp_params.components
             for subcomp_name, subcomp_params in subcomps.items():
                 subcomp_params.model = subcomp_params.model(subcomp_params)
-                subcomp_params.model._resample(self.wavelengths)
+                subcomp_params.model.resample(self.wavelengths)
             
-            # then validate that sub-compnents were added correctly
-            comp_params.model._validate_components(comp_params)
+            # then validate that sub-components were added correctly
+            comp_params.model.validate_components(comp_params)
 
         self.logger.info('Computing the SED')
         # Compute the main SED 

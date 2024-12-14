@@ -1,12 +1,13 @@
 import sys, os
 
-import boto3
+from boto3 import client as Client
 from botocore import UNSIGNED
 from botocore.client import Config
 from botocore.exceptions import ClientError
 
 from rich import print
 from rich.prompt import Confirm
+import argparse
 
 from .. import config
 
@@ -14,7 +15,7 @@ class GridManager:
     def __init__(self, bucket='brisket-data'):
         self.bucket = bucket
         #create the s3 client and assign credentials (UNSIGEND for public bucket)
-        self.client = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+        self.client = Client('s3', config=Config(signature_version=UNSIGNED))
 
     def list_objects(self):
         objs = self.client.list_objects(Bucket=self.bucket)['Contents']
@@ -66,3 +67,6 @@ class GridManager:
             whether_continue = Confirm.ask(f"Do you want to fetch the latest version [[red]{self.format_size(size)}[/red]] from [blue]s3://{self.bucket}[/blue]?", default=True)
             if not whether_continue: sys.exit(1)
             self.download_file(grid_file_name, os.path.join(config.grid_dir, grid_file_name))
+
+
+

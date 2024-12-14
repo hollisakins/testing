@@ -61,9 +61,9 @@ class BaseSFHModel:
         self.age_widths = np.diff(self.age_bins)
 
         self.sfh = np.zeros_like(self.ages)
-        self.weights = np.zeros_like(params.parent.model.grid_ages)
+        self.grid = params.parent.model.grid
+        self.weights = np.zeros_like(self.grid.ages)
         self.ceh = ChemicalEnrichmentHistoryModel(params.parent)
-        self.grid_live_frac = params.parent.model.grid_live_frac
 
         # self.update(params)
     def _resample(self, _):
@@ -96,7 +96,7 @@ class BaseSFHModel:
         self.combined_weights = self.ceh.weights
 
         # Normalise to 1 solar mass (current)
-        mass_norm = np.sum(self.grid_live_frac * self.combined_weights)
+        mass_norm = np.sum(self.grid.live_frac * self.combined_weights)
         self.combined_weights *= logMstar * weight / mass_norm
 
         # self._calculate_derived_quantities()
@@ -442,7 +442,7 @@ class ChemicalEnrichmentHistoryModel(object):
     Base class for chemical enrichment history models.
     """
     def __init__(self, params):
-        self.zmet_vals = params.model.grid_metallicities
+        self.zmet_vals = self.grid.zmet
         # self.zmet_lims = utils.make_bins(self.zmet_vals, fix_low=0, fix_high=10)
 
     def compute_weights(self, params, sfh_weights):
