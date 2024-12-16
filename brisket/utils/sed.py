@@ -9,7 +9,12 @@ Example usage:
 ::
 
     from brisket.utils.sed import SED
-    sed = SED(wav_rest = wav, fnu = fnu, redshift=5)
+    sed = SED(wav_rest = ..., total = ..., redshift=5, frame='observed')
+
+    sed = sed.to(xunit=u.angstrom, yunit=u.erg/u.s/u.cm**2/u.angstrom)
+
+    ax.plot(sed['wav_rest'], sed['total']
+
 
 """
 from __future__ import annotations
@@ -18,7 +23,7 @@ from collections.abc import Iterable
 import sys
 import numpy as np  
 from copy import deepcopy
-from astropy.units import Unit, Quantity
+from astropy.units import Unit, Quantity, spectral_density, UnitTypeError
 from astropy.constants import c as speed_of_light
 from astropy.constants import h as plancks_constant
 import spectres
@@ -48,11 +53,6 @@ class SED:
             Redshift of the source (defaults to 0).
         verbose (bool)
             Verbosity flag (defaults to True).
-        units (bool, optional)
-            Whether to use units (defaults to True). If True, the SED object
-            expects wavelengths/fluxes to be provided with units via astropy.units, 
-            and will assign the default units (specified in brisket.config) if none 
-            are provided.
         **kwargs
             Flux specification: no more than one of 'Llam', 'Lnu', 'flam', 'fnu', 'nuLnu', 'lamLlam', 'nufnu', 'lamflam' 
             If none are provided, the SED will be populated with zeros (in L_lam).
@@ -65,32 +65,32 @@ class SED:
     '''
     
     def __init__(self, 
-                #  wav_rest: Iterable[float], 
                  redshift: float | None = None, 
                  verbose: bool = True, 
-                 units: bool = True, 
-                 **kwargs):
+                 # x-axis specification (only one!)
+                 wav_rest: Iterable[float] = None, 
+                 wav_obs: Iterable[float] = None, 
+                 freq_rest: Iterable[float] = None, 
+                 freq_obs: Iterable[float] = None, 
+                 energy_rest: Iterable[float] = None, 
+                 energy_obs: Iterable[float] = None, 
+                 filters: Iterable[str] | Filters = None, 
+                 # y-axis specification (can have multiple)
+                 total: Iterable[float] = None,
+                 **components):
+
         if verbose:
             self.logger = setup_logger(__name__, 'INFO')
         else:
             self.logger = setup_logger(__name__, 'WARNING')
-
-
-        self.units = units
+        
         self.redshift = redshift
-        if self.redshift is not None:
-            if self.redshift == 0:
-                self.luminosity_distance = 10 * u.pc
-            else:
-                self.luminosity_distance = config.cosmo.luminosity_distance(self.redshift).to(u.pc)
-            if not units:
-                self.luminosity_distance = self.luminosity_distance.value
-        else:
-            self.luminosity_distance = NotImplemented
         
 
+        ### x-axis specification
         self._x_keys = ['wav_rest', 'wav_obs', 'freq_rest', 'freq_obs', 'energy_rest', 'energy_obs', 'filters']
-        self._x_defs = [k in kwargs for k in self._x_keys]
+        self._x = [wav_rest, wav_obs, freq_rest, freq_obs, energy_rest, energy_obs, filters]
+        self._x_defs = [k is not None for k in self._x]
         if sum(self._x_defs) != 1:
             self.logger.error(f"""Must supply exactly one specification of the SED 
                                   wavelength/frequency/energy axis. 
@@ -98,248 +98,501 @@ class SED:
             sys.exit()
 
         self._x_key = self._x_keys[self._x_defs.index(True)]
-        self._x = kwargs.get(self._x_key)
+        self._x = self._x[self._x_defs.index(True)]
+        self.units = hasattr(self._x, "unit")
 
         if self._x_key == 'filters':
-
             if isinstance(self._x, Filters):
                 self.filters = self._x
             elif isinstance(self._x, (list,np.ndarray)):
                 self.filters = Filters(self._x)
             else:
                 raise Exception
+            #TODO make sure that the filter wavelengths have units, IF y is provided with units
             self._x = self.filters.wav
             self._x_key = 'wav_obs'
         else:
             self.filters = None
             
-        
-        self._y_keys = ['Llam', 'Lnu', 'flam', 'fnu', 'nuLnu', 'lamLlam', 'nufnu', 'lamflam']
-        self._y_defs = [k in kwargs for k in self._y_keys]
-        if sum(self._y_defs) == 0:
+        ### y-axis specification
+        self._y = components
+        if total is None:
             self.logger.info('No flux/luminosity information provided, populating with zeros. If this is intended, you can ignore this message.')
-            self._y = np.zeros(len(self._x))
-            self._y_key = self._y_keys[0]
-        
-        elif sum(self._y_defs) != 1:
-            self.logger.error("Must supply at most one specification of the SED fluxes"); sys.exit()
-        
+            self._y['total'] = np.zeros(len(self._x))
+            self.units = False
         else:
-            self._y_key = self._y_keys[self._y_defs.index(True)]
-            self._y = kwargs.get(self._y_key)
-            
-            
-        
-        self._yerr_keys = ['err','error','Llam_err', 'Lnu_err', 'flam_err', 'fnu_err', 'nuLnu_err', 'lamLlam_err', 'nufnu_err', 'lamflam_err']
-        self._yerr_defs = [k in kwargs for k in self._yerr_keys]
-        if sum(self._yerr_defs) == 0:
-            self.logger.info('No flux/luminosity error information provided, populating with zeros. If this is intended, you can ignore this message.')
-            self._yerr = np.zeros(len(self._x))
-            self._yerr_key = self._yerr_keys[0]
+            self._y['total'] = total
+            self.units = self.units and hasattr(total, "unit")
 
-        elif sum(self._yerr_defs) != 1:
-            self.logger.error("Must supply at most one specification of the SED fluxes"); sys.exit()
-        
+        # perform some checks
+        assert len(set([len(c) for c in self._y.values()])) == 1, "All SED components must have the same length."
+        if self.units:
+            t = self._y_type # check the physical type of the unit (i.e., raise error if the type is not recognized)
+            assert len(set([c.unit for c in self._y.values()])) == 1, "All SED components must have the same units."
+
+
+
+
+        if self.filters is not None and self.units: 
+            pass
+            # TODO add units to filters
+            # self._x *= self.filters.wav.unit
+
+        if self.redshift is not None:
+            if self.redshift == 0:
+                self.luminosity_distance = 10 * u.pc
+            else:
+                self.luminosity_distance = config.cosmo.luminosity_distance(self.redshift).to(u.pc)
+            if not self.units:
+                self.luminosity_distance = self.luminosity_distance.value
         else:
-            self._yerr_key = self._yerr_keys[self._yerr_defs.index(True)]
-            self._yerr = kwargs.get(self._yerr_key)
-            
+            self.luminosity_distance = NotImplemented
+        
 
-        if units:
-            x_default_units = {'wav_rest':config.default_wavelength_unit, 
-                               'wav_obs':config.default_wavelength_unit,
-                               'freq_rest':config.default_frequency_unit,
-                               'freq_obs':config.default_frequency_unit,
-                               'energy_rest':config.default_energy_unit,
-                               'energy_obs':config.default_energy_unit}
-            if not hasattr(self._x, "unit"):
-                self.logger.info(f"No units specified for {self._x_key}, adopting default ({x_default_units[self._x_key]})")
-                self._x *= x_default_units[self._x_key]
+        # if units:
+            # x_default_units = {'wav_rest':config.default_wavelength_unit, 
+            #                    'wav_obs':config.default_wavelength_unit,
+            #                    'freq_rest':config.default_frequency_unit,
+            #                    'freq_obs':config.default_frequency_unit,
+            #                    'energy_rest':config.default_energy_unit,
+            #                    'energy_obs':config.default_energy_unit}
+            # if not hasattr(self._x, "unit"):
+            #     self.logger.info(f"No units specified for {self._x_key}, adopting default ({x_default_units[self._x_key]})")
+            #     self._x *= x_default_units[self._x_key]
 
-            y_default_units = {'Llam': config.default_Llam_unit, 
-                               'Lnu': config.default_Lnu_unit, 
-                               'flam': config.default_flam_unit, 
-                               'fnu': config.default_fnu_unit, 
-                               'nuLnu': config.default_lum_unit, 
-                               'lamLlam': config.default_lum_unit, 
-                               'nufnu': config.default_flux_unit, 
-                               'lamflam': config.default_flux_unit}
+            # y_default_units = {'Llam': config.default_Llam_unit, 
+            #                    'Lnu': config.default_Lnu_unit, 
+            #                    'flam': config.default_flam_unit, 
+            #                    'fnu': config.default_fnu_unit, 
+            #                    'nuLnu': config.default_lum_unit, 
+            #                    'lamLlam': config.default_lum_unit, 
+            #                    'nufnu': config.default_flux_unit, 
+            #                    'lamflam': config.default_flux_unit}
 
-            if not hasattr(self._y, "unit"):
-                self.logger.info(f"No units specified for {self._y_key}, adopting default ({y_default_units[self._y_key]})")
-                self._y *= y_default_units[self._y_key]
+            # if not hasattr(self._y, "unit"):
+            #     self.logger.info(f"No units specified for {self._y_key}, adopting default ({y_default_units[self._y_key]})")
+            #     self._y *= y_default_units[self._y_key]
 
-            if not hasattr(self._yerr, "unit"):
-                self.logger.info(f"No units specified for {self._yerr_key}, adopting default ({y_default_units[self._y_key]})")
-                self._yerr *= y_default_units[self._y_key]
+            # if not hasattr(self._yerr, "unit"):
+            #     self.logger.info(f"No units specified for {self._yerr_key}, adopting default ({y_default_units[self._y_key]})")
+            #     self._yerr *= y_default_units[self._y_key]
 
-            # TODO handle case where units are provided for y but not yerr
+            # # TODO handle case where units are provided for y but not yerr
 
-            self._x_unit = self._x.unit
-            self._y_unit = self._y.unit
+            # self._x_unit = self._x.unit
+            # self._y_unit = self._y.unit
 
-    def __getitem__(self, indices):
-        '''Allows access to the flux array via direct indexing of the SED object'''
-        newobj = deepcopy(self)
-        newobj._y = newobj._y[indices]
-        return newobj
+    # def __getitem__(self, indices):
+    #     '''Allows access to the flux array via direct indexing of the SED object'''
+    #     newobj = deepcopy(self)
+    #     for k in self.components.keys():
+    #         newobj.components[k] = newobj.components[k][indices]
+    #     return newobj
     
-    def __setitem__(self, indices, values):
-        '''Allows setting of the flux array via direct indexing of the SED object'''
-        self._y[indices] = values
+    # def __setitem__(self, indices, values):
+    #     '''Allows setting of the flux array via direct indexing of the SED object'''
+    #     self._y[indices] = values
+
+    def __getitem__(self, key):
+        if key in self._x_keys:
+            return getattr(self, key)
+        return self._y[key]
+
+    #### x axis specification ##############################################################################################
+    # the following methods handle the various ways to specify the x-axis values/units, and conversions between
+
+    @property
+    def _x_implemented(self):
+        redshift = self.redshift is not None
+        implemented = [self._x_key]
+        if self._x_key=='wav_rest': 
+            if self.units:
+                implemented.append('freq_rest')
+                implemented.append('energy_rest')
+                if redshift:
+                    implemented.append('wav_obs')
+                    implemented.append('freq_obs')
+                    implemented.append('energy_obs')
+            else:
+                if redshift:
+                    implemented.append('wav_obs')
+        elif self._x_key=='wav_obs': 
+            if self.units:
+                implemented.append('freq_obs')
+                implemented.append('energy_obs')
+                if redshift:
+                    implemented.append('wav_rest')
+                    implemented.append('freq_rest')
+                    implemented.append('energy_rest')
+            else:
+                if redshift:
+                    implemented.append('wav_rest')
+        elif self._x_key=='freq_rest': 
+            if self.units:
+                implemented.append('wav_rest')
+                implemented.append('energy_rest')
+                if redshift:
+                    implemented.append('wav_obs')
+                    implemented.append('freq_obs')
+                    implemented.append('energy_obs')
+            else:
+                if redshift:
+                    implemented.append('freq_obs')
+        elif self._x_key=='freq_obs': 
+            if self.units:
+                implemented.append('wav_obs')
+                implemented.append('energy_obs')
+                if redshift:
+                    implemented.append('wav_rest')
+                    implemented.append('freq_rest')
+                    implemented.append('energy_rest')
+            else:
+                if redshift:
+                    implemented.append('freq_rest')
+        
+        elif self._x_key=='energy_rest': 
+            if self.units:
+                implemented.append('wav_rest')
+                implemented.append('freq_rest')
+                if redshift:
+                    implemented.append('wav_obs')
+                    implemented.append('freq_obs')
+                    implemented.append('energy_obs')
+            else:
+                if redshift:
+                    implemented.append('energy_obs')
+        elif self._x_key=='energy_obs': 
+            if self.units:
+                implemented.append('wav_obs')
+                implemented.append('freq_obs')
+                if redshift:
+                    implemented.append('wav_rest')
+                    implemented.append('freq_rest')
+                    implemented.append('energy_rest')
+            else:
+                if redshift:
+                    implemented.append('energy_rest')
+
+        return implemented
+
 
     @property 
-    def wav_rest(self) -> u.Quantity | np.ndarray:
+    def wav_rest(self) -> Quantity | np.ndarray:
         '''Rest-frame wavelengths'''
+        if 'wav_rest' not in self._x_implemented:
+            return NotImplemented
         if self._x_key=='wav_rest': 
             return self._x
         elif self._x_key=='wav_obs': 
-            if self.redshift is None:
-                return NotImplemented
             return self._x / (1+self.redshift)
         elif self._x_key=='freq_rest': 
-            if not self.units:
-                return NotImplemented
             return (speed_of_light/self._x).to(config.default_wavelength_unit)
         elif self._x_key=='freq_obs': 
-            if self.redshift is None or not self.units:
-                return NotImplemented
             return (speed_of_light/(self._x/(1+self.redshift))).to(config.default_wavelength_unit)
         elif self._x_key=='energy_rest': 
-            if not self.units:
-                return NotImplemented
             return (plancks_constant * speed_of_light / self._x).to(config.default_wavelength_unit)
         elif self._x_key=='energy_obs': 
-            if self.redshift is None or not self.units:
-                return NotImplemented
             return (plancks_constant * speed_of_light / self._x / (1+self.redshift)).to(config.default_wavelength_unit)
 
     @property 
-    def wav_obs(self) -> u.Quantity | np.ndarray:
+    def wav_obs(self) -> Quantity | np.ndarray:
         '''Observed-frame wavelengths'''
+        if 'wav_obs' not in self._x_implemented:
+            return NotImplemented
         if self._x_key=='wav_rest': 
-            if self.redshift is None:
-                return NotImplemented
             return self._x * (1+self.redshift)
         elif self._x_key=='wav_obs': 
             return self._x
         elif self._x_key=='freq_rest': 
-            if self.redshift is None or not self.units:
-                return NotImplemented
             return (speed_of_light/(self._x*(self.redshift))).to(config.default_wavelength_unit)
         elif self._x_key=='freq_obs': 
-            if not self.units:
-                return NotImplemented
             return (speed_of_light/self._x).to(config.default_wavelength_unit)
         elif self._x_key=='energy_rest': 
-            if not self.units:
-                return NotImplemented
-            return NotImplemented
+            return (plancks_constant * speed_of_light / self._x * (1+self.redshift)).to(config.default_wavelength_unit)
         elif self._x_key=='energy_obs': 
-            if self.redshift is None or not self.units:
-                return NotImplemented
-            return NotImplemented
+            return (plancks_constant * speed_of_light / self._x).to(config.default_wavelength_unit)
+            
 
     @property 
-    def freq_rest(self) -> u.Quantity:
+    def freq_rest(self) -> Quantity | np.ndarray:
         '''Rest-frame frequencies'''
-        return (speed_of_light/self.wav_rest).to(config.default_frequency_unit)
-    @property 
-    def freq_obs(self) -> u.Quantity:
-        '''Observed-frame frequencies'''
-        return self.freq_rest / (1+self.redshift)
-    @property 
-    def energy_rest(self) -> u.Quantity:
-        '''Rest-frame energies'''
-        return (plancks_constant * self.freq_rest).to(config.default_energy_unit)
-    @property 
-    def energy_obs(self) -> u.Quantity:
-        '''Observed-frame energies'''
-        return self.energy_rest / (1+self.redshift)
-
-
-    @property
-    def fnu(self):
-        '''
-        Spectral flux density in terms of flux per unit frequency. Automatically converts from the flux specification defined at construction.
-        '''
-        if self._y_key=='fnu':
-            return (self._y).to(config.default_fnu_unit)
-        elif self._y_key=='flam':
-            return (self._y * self.wav_obs**2 / speed_of_light).to(config.default_fnu_unit)
-        elif self._y_key=='Lnu':
-            return (self._y / (4*np.pi*self.luminosity_distance**2)).to(config.default_fnu_unit)
-        elif self._y_key=='Llam':
-            return (self._y / (4*np.pi*self.luminosity_distance**2) * self.wav_obs**2 / speed_of_light).to(config.default_fnu_unit)
-        elif self._y_key=='L':
-            return (self._y / self.nu_obs / (4*np.pi*self.luminosity_distance**2)).to(config.default_fnu_unit)
-        elif self._y_key=='f':
-            return (self._y / self.nu_obs).to(config.default_fnu_unit)
-        else:
-            raise Exception
-
-    @property
-    def fnu_err(self):
-        '''
-        Spectral flux density in terms of flux per unit frequency. Automatically converts from the flux specification defined at construction.
-        '''
-        if self._y_key=='fnu':
-            return (self._yerr).to(config.default_fnu_unit)
-        elif self._y_key=='flam':
-            return (self._yerr * self.wav_obs**2 / speed_of_light).to(config.default_fnu_unit)
-        elif self._y_key=='Lnu':
-            return (self._yerr / (4*np.pi*self.luminosity_distance**2)).to(config.default_fnu_unit)
-        elif self._y_key=='Llam':
-            return (self._yerr / (4*np.pi*self.luminosity_distance**2) * self.wav_obs**2 / speed_of_light).to(config.default_fnu_unit)
-        elif self._y_key=='L':
-            return (self._yerr / self.nu_obs / (4*np.pi*self.luminosity_distance**2)).to(config.default_fnu_unit)
-        elif self._y_key=='f':
-            return (self._yerr / self.nu_obs).to(config.default_fnu_unit)
-        else:
-            raise Exception
-    
-    @property
-    def flam(self):
-        '''
-        Spectral flux density in terms of flux per unit wavelength. Automatically converts from the flux specification defined at construction.
-        '''
-        if self._y_key=='fnu':
-            return (self._y / self.wav_obs**2 * speed_of_light).to(config.default_flam_unit)
-        elif self._y_key=='flam':
-            return (self._y).to(config.default_flam_unit)
-        elif self._y_key=='Lnu':
-            return (self._y / (4*np.pi*self.luminosity_distance**2) / self.wav_obs**2 * speed_of_light).to(config.default_flam_unit)
-        elif self._y_key=='Llam':
-            return (self._y / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
-        elif self._y_key=='L':
-            return (self._y / self.lam_obs / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
-        elif self._y_key=='f':
-            return (self._y / self.lam_obs).to(config.default_flam_unit)
-        else:
-            raise Exception
-    
-    @property
-    def Llam(self):
-        '''
-        Spectral flux density in terms of flux per unit wavelength. Automatically converts from the flux specification defined at construction.
-        '''
-        if self._y_key=='fnu':
+        if 'freq_rest' not in self._x_implemented:
+            return NotImplemented
+        if self._x_key=='wav_rest':
+            return (speed_of_light/self._x).to(config.default_frequency_unit)
+        elif self._x_key=='wav_obs':
             pass
-        elif self._y_key=='flam':
-            pass # return (self._y).to(config.default_flam_unit)
-        elif self._y_key=='Lnu':
-            return (self._y / self.wav_obs**2 * speed_of_light).to(config.default_Llam_unit)
-        elif self._y_key=='Llam':
-            return self._y
-            # return (self._y / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
-        elif self._y_key=='L':
-            pass # return (self._y / self.lam_obs / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
-        elif self._y_key=='f':
-            pass # return (self._y / self.lam_obs).to(config.default_flam_unit)
-        else:
-            raise Exception
+        elif self._x_key=='freq_rest':
+            return self._x
+        elif self._x_key=='freq_obs':
+            return self._x * (1+self.redshift)
+        elif self._x_key=='energy_rest':
+            pass
+        elif self._x_key=='energy_obs':
+            pass
 
-    #TODO define flam, Lnu, etc
+    @property 
+    def freq_obs(self) -> Quantity | np.ndarray:
+        '''Observed-frame frequencies'''
+        if 'freq_obs' not in self._x_implemented:
+            return NotImplemented
+        if self._x_key=='wav_rest':
+            pass
+        elif self._x_key=='wav_obs':
+            pass
+        elif self._x_key=='freq_rest':
+            return self._x / (1+self.redshift)
+        elif self._x_key=='freq_obs':
+            return self._x
+        elif self._x_key=='energy_rest':
+            pass
+        elif self._x_key=='energy_obs':
+            pass
+
+    @property 
+    def energy_rest(self) -> Quantity | np.ndarray:
+        '''Rest-frame energies'''
+        if 'energy_rest' not in self._x_implemented:
+            return NotImplemented
+        if self._x_key=='wav_rest':
+            pass
+        elif self._x_key=='wav_obs':
+            pass
+        elif self._x_key=='freq_rest':
+            return (plancks_constant * self._x).to(config.default_energy_unit)
+        elif self._x_key=='freq_obs':
+            return (plancks_constant * self._x / (1+self.redshift)).to(config.default_energy_unit)
+        elif self._x_key=='energy_rest':
+            return self._x
+        elif self._x_key=='energy_obs':
+            return self._x * (1+self.redshift)
+    
+    @property 
+    def energy_obs(self) -> Quantity | np.ndarray:
+        '''Observed-frame energies'''
+        if 'energy_obs' not in self._x_implemented:
+            return NotImplemented
+        if self._x_key=='wav_rest':
+            pass
+        elif self._x_key=='wav_obs':
+            pass
+        elif self._x_key=='freq_rest':
+            pass
+        elif self._x_key=='freq_obs':
+            pass
+        elif self._x_key=='energy_rest':
+            return self._x / (1+self.redshift)
+        elif self._x_key=='energy_obs':
+            return self._x
+
+    #### y axis specification ##############################################################################################
+    # the following methods handle the various ways to specify the y-axis values/units, and conversions between
+    @property 
+    def _y_type(self):
+        current_y_unit = self._y['total'].unit
+        if 'spectral flux density' in current_y_unit.physical_type: return 'fnu'
+        elif 'spectral flux density wav' in current_y_unit.physical_type: return 'flam'
+        elif 'energy flux' in current_y_unit.physical_type: return 'f'
+        elif 'energy' in current_y_unit.physical_type: return 'Lnu'
+        elif 'yank' in current_y_unit.physical_type: return 'Llam'
+        elif 'power' in current_y_unit.physical_type: return 'L'
+        else: raise UnitTypeError(f"Couldn't figure out the physical type of the current y-axis unit ({current_y_unit}).")
+
+
+    def convert_units(self, xunit: Unit, yunit: Unit, inplace=True):
+        if not self.units:
+            self.logger.error("Cannot convert units for SED object without units. Assign units using SED.assign_units() first.")
+            sys.exit()
+
+        # Convert x-units, and set _x to the new physical type / unit
+        x_frame = self._x_key.split('_')[1]
+        if 'length' in xunit.physical_type:
+            x_key = f'wav_{x_frame}'
+        elif 'frequency' in xunit.physical_type:
+            x_key = f'freq_{x_frame}'
+        elif 'energy' in xunit.physical_type:
+            x_key = f'energy_{x_frame}'
+        self._x = getattr(self, x_key).to(xunit)
+        self._x_key = x_key
+
+        fourPiLumDistSq = self.fourPiLumDistSq
+        #current_y_unit = self._y['total'].unit
+        #current_fnu = 'spectral flux density' in current_y_unit.physical_type
+        #current_flam = 'spectral flux density wav' in current_y_unit.physical_type
+        #current_f = 'energy flux' in current_y_unit.physical_type
+        #current_Lnu = 'energy' in current_y_unit.physical_type
+        #current_Llam = 'yank' in current_y_unit.physical_type
+        #current_L = 'power' in current_y_unit.physical_type
+        
+        to_fnu = 'spectral flux density' in yunit.physical_type
+        to_flam = 'spectral flux density wav' in yunit.physical_type
+        to_f = 'energy flux' in yunit.physical_type
+        to_Lnu = 'energy' in yunit.physical_type
+        to_Llam = 'yank' in yunit.physical_type
+        to_L = 'power' in yunit.physical_type
+
+        # not changing physical type (i.e., fnu->fnu, flam->flam, etc.)
+        if (self._y_type == 'f' and to_f) or (self._y_type == 'L' and to_L) or (self._y_type == 'fnu' and to_fnu) or (self._y_type == 'flam' and to_flam) or (self._y_type == 'Lnu' and to_Lnu) or (self._y_type == 'Llam' and to_Llam):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y).to(yunit) 
+        
+        # going from fnu->flam, flam->fnu, Lnu->Llam, Llam->Lnu
+        # TODO how does equivalencies handle rest-frame vs observed-frame?
+        elif (self._y_type == 'fnu' and to_flam) or (self._y_type == 'flam' and to_fnu) or (self._y_type == 'Lnu' and to_Llam) or (self._y_type == 'Llam' and to_Lnu): # easy to convert between fnu and flam
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = component_y.to(yunit, equivalencies=spectral_density(self._x)) 
+
+        # going from fnu->Lnu, flam->Llam, or f->L
+        elif (self._y_type == 'fnu' and to_Lnu) or (self._y_type == 'flam' and to_Llam) or (self._y_type == 'f' and to_L):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y * fourPiLumDistSq).to(yunits) 
+        
+        # going from Lnu->fnu, Llam->flam, or L->f
+        elif (self._y_type == 'Lnu' and to_fnu) or (self._y_type == 'Llam' and to_flam) or (self._y_type == 'L' and to_f):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y / fourPiLumDistSq).to(yunits) 
+
+        # going from fnu->Llam or flam->Lnu
+        elif (self._y_type == 'fnu' and to_Llam) or (self._y_type == 'flam' and to_Lnu):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y * fourPiLumDistSq).to(yunit, equivalencies=spectral_density(self._x)) 
+        
+        # going from Lnu->flam or Llam->fnu
+        elif (self._y_type == 'Lnu' and to_flam) or (self._y_type == 'Llam' and to_fnu):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y / fourPiLumDistSq).to(yunit, equivalencies=spectral_density(self._x)) 
+        
+        # specific implementations for converting to/from f
+        elif (self._y_type == 'f' and to_fnu):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y / self.freq_obs).to(yunit) # TODO handle frame
+        elif (self._y_type == 'f' and to_flam):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y / self.wav_obs).to(yunit)
+        elif (self._y_type == 'f' and to_Lnu):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y * fourPiLumDistSq / self.freq_obs).to(yunit) # TODO handle frame
+        elif (self._y_type == 'f' and to_Llam):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y * fourPiLumDistSq / self.wav_obs).to(yunit)
+        elif (self._y_type == 'fnu' and to_f):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y * self.freq_obs).to(yunit) # TODO handle frame
+        elif (self._y_type == 'flam' and to_f):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y * self.wav_obs).to(yunit)
+        elif (self._y_type == 'Lnu' and to_f):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y / fourPiLumDistSq * self.freq_obs).to(yunit) # TODO handle frame
+        elif (self._y_type == 'Llam' and to_f):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y / fourPiLumDistSq * self.wav_obs).to(yunit)
+        
+        # specific implementations for converting to/from L
+        elif (self._y_type == 'L' and to_fnu):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y / fourPiLumDistSq / self.freq_obs).to(yunit) # TODO handle frame
+        elif (self._y_type == 'L' and to_flam):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y / fourPiLumDistSq / self.wav_obs).to(yunit)
+        elif (self._y_type == 'L' and to_Lnu):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y / self.freq_obs).to(yunit) # TODO handle frame
+        elif (self._y_type == 'L' and to_Llam):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y / self.wav_obs).to(yunit)
+        elif (self._y_type == 'fnu' and to_L):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y * fourPiLumDistSq * self.freq_obs).to(yunit) # TODO handle frame
+        elif (self._y_type == 'flam' and to_L):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y * fourPiLumDistSq * self.wav_obs).to(yunit)
+        elif (self._y_type == 'Lnu' and to_L):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y * self.freq_obs).to(yunit) # TODO handle frame
+        elif (self._y_type == 'Llam' and to_L):
+            for component_name, component_y in self._y.items():
+                self._y[component_name] = (component_y * self.wav_obs).to(yunit)
+
+        else:
+            self.logger.error(f"Couldn't figure out how to convert from {current_y_unit} to {yunit}. Perhaps this is not implemented yet?")
+            sys.exit()
+        
+
+
+    def assign_units(self, xunit: Unit, yunit: Unit) -> None:
+        '''
+        Assigns units to the SED object. Used when the SED is constructed without units (for speed) but 
+        units are needed for further calculations. 
+        '''
+        self._x *= xunit
+        for k in self._y.keys():
+            self._y[k] *= yunit
+        self.units = True
+
+
+    # @property
+    # def fnu(self):
+    #     '''
+    #     Spectral flux density in terms of flux per unit frequency. Automatically converts from the flux specification defined at construction.
+    #     '''
+    #     if self._y_key=='fnu':
+    #         return (self._y).to(config.default_fnu_unit)
+    #     elif self._y_key=='flam':
+    #         return (self._y * self.wav_obs**2 / speed_of_light).to(config.default_fnu_unit)
+    #     elif self._y_key=='Lnu':
+    #         return (self._y / (4*np.pi*self.luminosity_distance**2)).to(config.default_fnu_unit)
+    #     elif self._y_key=='Llam':
+    #         return (self._y / (4*np.pi*self.luminosity_distance**2) * self.wav_obs**2 / speed_of_light).to(config.default_fnu_unit)
+    #     elif self._y_key=='L':
+    #         return (self._y / self.nu_obs / (4*np.pi*self.luminosity_distance**2)).to(config.default_fnu_unit)
+    #     elif self._y_key=='f':
+    #         return (self._y / self.nu_obs).to(config.default_fnu_unit)
+    #     else:
+    #         raise Exception
+
+    
+    # @property
+    # def flam(self):
+    #     '''
+    #     Spectral flux density in terms of flux per unit wavelength. Automatically converts from the flux specification defined at construction.
+    #     '''
+    #     if self._y_key=='fnu':
+    #         return (self._y / self.wav_obs**2 * speed_of_light).to(config.default_flam_unit)
+    #     elif self._y_key=='flam':
+    #         return (self._y).to(config.default_flam_unit)
+    #     elif self._y_key=='Lnu':
+    #         return (self._y / (4*np.pi*self.luminosity_distance**2) / self.wav_obs**2 * speed_of_light).to(config.default_flam_unit)
+    #     elif self._y_key=='Llam':
+    #         return (self._y / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
+    #     elif self._y_key=='L':
+    #         return (self._y / self.lam_obs / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
+    #     elif self._y_key=='f':
+    #         return (self._y / self.lam_obs).to(config.default_flam_unit)
+    #     else:
+    #         raise Exception
+    
+    # @property
+    # def Llam(self):
+    #     '''
+    #     Spectral flux density in terms of flux per unit wavelength. Automatically converts from the flux specification defined at construction.
+    #     '''
+    #     if self._y_key=='fnu':
+    #         pass
+    #     elif self._y_key=='flam':
+    #         pass # return (self._y).to(config.default_flam_unit)
+    #     elif self._y_key=='Lnu':
+    #         return (self._y / self.wav_obs**2 * speed_of_light).to(config.default_Llam_unit)
+    #     elif self._y_key=='Llam':
+    #         return self._y
+    #         # return (self._y / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
+    #     elif self._y_key=='L':
+    #         pass # return (self._y / self.lam_obs / (4*np.pi*self.luminosity_distance**2)).to(config.default_flam_unit)
+    #     elif self._y_key=='f':
+    #         pass # return (self._y / self.lam_obs).to(config.default_flam_unit)
+    #     else:
+    #         raise Exception
+
 
     #################################################################################
     def resample(self, fill=0, **kwargs):
@@ -364,6 +617,15 @@ class SED:
         return self._y
 
     def __repr__(self):
+
+        # x-axis: {self._x_key} = {self._x}
+        # available (computed on the fly): {*self._x_keys}
+        # can convert to: 
+
+        # y-axis: total ({self._y_type}) = {self.total} {self._y_unit}
+        #         {name} ({self._y_type}) = {self.name} {self._y_unit}
+        # can convert to: 
+
         if self.units:
             all_flux_defs = ['fnu','flam','Lnu','Llam','nufnu','lamflam','nuLnu','lamLlam']
             if self.filters is not None:
@@ -413,7 +675,7 @@ class SED:
         # if np.ndim(f) == 1:
             # if len(self.wav_rest) > 4:
             #     wstr = f'[{w[0]:.2f}, {w[1]:.2f}, ..., {w[-2]:.2f}, {w[-1]:.2f}] {config.default_wavelength_unit}'
-            #     fstr = f'[{f[0]:.1e}, {f[1]:.1e}, ..., {f[-2]:.1e}, {f[-1]:.1e}] {self.fnu.unit}'
+            #     fstr = f'[{f[0]:.1e}, {f[1]:.1e}, ..., {f[-2]:.1e}, {f[-1]:.1e}] {self.fnUnit}'
             # l = max((len(wstr),len(fstr)))
             # wstr = wstr.ljust(l+3)
             # fstr = fstr.ljust(l+3)
@@ -424,7 +686,7 @@ class SED:
         # elif np.ndim(f)==2:
         #     if len(self.wav_rest) > 4:
         #         wstr = f'[{w[0]:.2f}, {w[1]:.2f}, ..., {w[-2]:.2f}, {w[-1]:.2f}] {config.default_wavelength_unit}'
-        #         fstr = f'[{f[0]:.1e}, {f[1]:.1e}, ..., {f[-2]:.1e}, {f[-1]:.1e}] {self.fnu.unit}'
+        #         fstr = f'[{f[0]:.1e}, {f[1]:.1e}, ..., {f[-2]:.1e}, {f[-1]:.1e}] {self.fnUnit}'
         #     l = max((len(wstr),len(fstr)))
         #     wstr = wstr.ljust(l+3)
         #     fstr = fstr.ljust(l+3)
@@ -478,19 +740,7 @@ class SED:
     #         return NotImplemented
 
 
-    def to(self, unit, inplace=False):
-        # if unit is wavelength or frquency, adjust x-units
-        # if unit is flux or flux density, adjust y-units
-        # if unit is tuple of (wavelength OR frequency, flux OR flux density), adjust both x and y-units
-        pass
-
         
-        # if 'spectral flux density' in list(self.sed_units.physical_type):
-        #     self.logger.debug(f"Converting SED flux units to f_nu ({self.sed_units})")
-        #     self.sed_unit_conv = (1*u.Lsun/u.angstrom/u.cm**2 * (1 * self.wav_units)**2 / speed_of_light).to(self.sed_units).value
-        # elif 'spectral flux density wav' in list(self.sed_units.physical_type):
-        #     self.logger.debug(f"Keeping SED flux units in f_lam ({self.sed_units})")
-        #     self.sed_unit_conv = (1*u.Lsun/u.angstrom/u.cm**2).to(self.sed_units).value
 
     def measure_window_luminosity(self, window):
         pass
@@ -502,7 +752,10 @@ class SED:
 
     ########################################################################################################################
     @property
-    def Lbol(self) -> u.Quantity:
+    def fourPiLumDistSq(self):
+        return 4*np.pi*self.luminosity_distance**2
+    @property
+    def Lbol(self) -> Quantity:
         '''
         Bolometric luminosity of the SED.
         To be implemented.
@@ -517,7 +770,7 @@ class SED:
         '''
         if not self.units:
             return NotImplemented
-        w = self.wav_rest.to(u.angstrom).value
+        w = self.wav_rest.to(Unit('angstrom')).value
         windows = ((w>=1268)&(w<=1284))|((w>=1309)&(w<=1316))|((w>=1342)&(w<=1371))|((w>=1407)&(w<=1515))|((w>=1562)&(w<=1583))|((w>=1677)&(w<=1740))|((w>=1760)&(w<=1833))|((w>=1866)&(w<=1890))|((w>=1930)&(w<=1950))|((w>=2400)&(w<=2580))
         p = np.polyfit(np.log10(w[windows]), np.log10(self.flam[windows].value), deg=1)
         return p[0]
@@ -530,10 +783,10 @@ class SED:
         '''
         if not self.units or self.redshift is None: 
             return NotImplemented
-        w = self.wav_rest.to(u.angstrom).value
+        w = self.wav_rest.to(Unit('angstrom')).value
         tophat = (w > 1450)&(w < 1550)
-        mUV = (np.mean(self.fnu[tophat])/(1+self.redshift)).to(u.ABmag).value
-        return mUV - 5*(np.log10(self.luminosity_distance.to(u.pc).value)-1)
+        mUV = (np.mean(self.fnu[tophat])/(1+self.redshift)).to(Unit('ABmag')).value
+        return mUV - 5*(np.log10(self.luminosity_distance.to(Unit('pc')).value)-1)
 
     @property
     def properties(self) -> dict:
@@ -556,8 +809,8 @@ class SED:
              step: bool = False, 
              xscale: str = None,
              yscale: str = None,
-             xunit: str | u.Unit = None,
-             yunit: str | u.Unit = None,
+             xunit: str | Unit = None,
+             yunit: str | Unit = None,
              xlim: tuple[float,float] = None, 
              ylim: tuple[float,float] = None, 
              verbose_labels: bool = False,
@@ -582,10 +835,10 @@ class SED:
                 Scaling for the x-axis. Default: 'linear'.
             yscale (str)
                 Scaling for the y-axis. Default: 'linear'.
-            xunit (str or u.Unit)
+            xunit (str or Unit)
                 Unit for the x-axis. Default: None, i.e., interpreted automatically
                 from the x-axis values. 
-            yunit (str or u.Unit)
+            yunit (str or Unit)
                 Unit for the y-axis. Default: None, i.e., interpreted automatically
                 from the y-axis values.
             xlim (tuple)
@@ -760,4 +1013,17 @@ class SED:
         newobj._y = np.transpose(self._y)
         return newobj
 
-        
+
+if __name__ == '__main__':
+    # Test SED object
+    import astropy.units as u
+    wav_rest = np.linspace(5e2, 1e4, 5000) * u.angstrom
+    fnu = np.ones(len(wav_rest)) * u.uJy
+    fnu[wav_rest<1216*u.angstrom] *= 0
+
+    sed = SED(wav_rest=wav_rest, total=fnu, redshift=7, verbose=True)
+    # print(sed._x_implemented)
+    sed.convert_units(xunit=u.micron, yunit=u.mJy)
+    print(sed['wav_obs'])
+    print(sed['total'])
+    # print(sed._y['total'].unit)
