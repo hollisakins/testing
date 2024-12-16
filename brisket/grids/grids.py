@@ -37,6 +37,10 @@ class Grid:
     @property 
     def shape(self):
         return self.data.shape[:-1] # remove the last axis, which is the SED
+    
+    @property
+    def ndim(self):
+        return len(self.shape) # remove the last axis, which is the SED
 
     @property 
     def wavelengths(self):

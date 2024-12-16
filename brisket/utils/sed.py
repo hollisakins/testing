@@ -32,10 +32,13 @@ from .. import config
 from . import utils
 from .filters import Filters
 border_chars = config.border_chars
-from brisket.console import setup_logger
+from brisket.console import setup_logger, rich_str
+from rich.tree import Tree
 
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+
+
 
 
 
@@ -127,7 +130,7 @@ class SED:
         # perform some checks
         assert len(set([len(c) for c in self._y.values()])) == 1, "All SED components must have the same length."
         if self.units:
-            t = self._y_type # check the physical type of the unit (i.e., raise error if the type is not recognized)
+            assert len(set([self._check_y_type(c.unit) for c in self._y.values()])) == 1, "All SED components must have the same physical type."
             assert len(set([c.unit for c in self._y.values()])) == 1, "All SED components must have the same units."
 
 
@@ -197,6 +200,17 @@ class SED:
         if key in self._x_keys:
             return getattr(self, key)
         return self._y[key]
+    
+    def __setitem__(self, key, value):
+        '''Allows setting of the flux array via direct indexing of the SED object'''
+        # perform some checks
+        assert np.shape(value) == np.shape(self._y['total']), "All SED components must have the same length."
+        if self.units:
+            assert self._check_y_type(value.unit) == self._y_type, "All SED components must have the same physical type."
+            value = value.to(self._y_unit)
+        self._y[key] = value
+
+
 
     #### x axis specification ##############################################################################################
     # the following methods handle the various ways to specify the x-axis values/units, and conversions between
@@ -385,19 +399,29 @@ class SED:
         elif self._x_key=='energy_obs':
             return self._x
 
+    @property
+    def _x_unit(self):
+        return self._x.unit
+
     #### y axis specification ##############################################################################################
     # the following methods handle the various ways to specify the y-axis values/units, and conversions between
-    @property 
-    def _y_type(self):
-        current_y_unit = self._y['total'].unit
-        if 'spectral flux density' in current_y_unit.physical_type: return 'fnu'
-        elif 'spectral flux density wav' in current_y_unit.physical_type: return 'flam'
-        elif 'energy flux' in current_y_unit.physical_type: return 'f'
-        elif 'energy' in current_y_unit.physical_type: return 'Lnu'
-        elif 'yank' in current_y_unit.physical_type: return 'Llam'
-        elif 'power' in current_y_unit.physical_type: return 'L'
+
+    @property
+    def _y_unit(self):
+        return self._y['total'].unit
+
+    def _check_y_type(self, y_unit):
+        if 'spectral flux density' in y_unit.physical_type: return 'fnu'
+        elif 'spectral flux density wav' in y_unit.physical_type: return 'flam'
+        elif 'energy flux' in y_unit.physical_type: return 'f'
+        elif 'energy' in y_unit.physical_type: return 'Lnu'
+        elif 'yank' in y_unit.physical_type: return 'Llam'
+        elif 'power' in y_unit.physical_type: return 'L'
         else: raise UnitTypeError(f"Couldn't figure out the physical type of the current y-axis unit ({current_y_unit}).")
 
+    @property 
+    def _y_type(self):
+        return self._check_y_type(self._y_unit)
 
     def convert_units(self, xunit: Unit, yunit: Unit, inplace=True):
         if not self.units:
@@ -618,6 +642,7 @@ class SED:
 
     def __repr__(self):
 
+        tree = Tree(f"[bold italic white]BRISKET-SED[/bold italic white](ndim={self.ndim}, redshift={self.redshift}, units={self.units})")
         # x-axis: {self._x_key} = {self._x}
         # available (computed on the fly): {*self._x_keys}
         # can convert to: 
@@ -627,24 +652,23 @@ class SED:
         # can convert to: 
 
         if self.units:
-            all_flux_defs = ['fnu','flam','Lnu','Llam','nufnu','lamflam','nuLnu','lamLlam']
             if self.filters is not None:
-                wstr = f'filters: {", ".join(self.filters.nicknames)} {np.shape(self._x)}'
+                x = tree.add('[bold #6495ED not italic]x-axis[white]: [italic not bold]' + f'[green]filters[white not italic]: {", ".join(self.filters.nicknames)} [dark_red]{np.shape(self._x)}')
             else:
-                wstr = f'{self._x_key}: [{self._x.value[0]:.2f}, {self._x.value[1]:.2f}, ..., {self._x.value[-2]:.2f}, {self._x.value[-1]:.2f}] {self._x_unit} {np.shape(self._x)}'
-            if np.ndim(self._y) > 1:
-                fstr1 = f'{self._y_key} (base): [...] {self._y_unit} {np.shape(self._y)}'
-                fstr2 = '(available) ' + ', '.join(map(str,[a for a in all_flux_defs if a != self._y_key])) # TODO add check for flux_defs being implemented 
-                betastr = f'beta: ?, Muv: ?, Lbol: ?'
-            else:
-                if len(self._y) > 4:
-                    fstr1 = f'{self._y_key} (base): [{self._y.value[0]:.2f}, {self._y.value[1]:.2f}, ..., {self._y.value[-2]:.2f}, {self._y.value[-1]:.2f}] {self._y_unit} {np.shape(self._y)}'
-                else:
-                    fstr1 = f'{self._y_key} (base): [{self._y.value[0]:.2f}, {self._y.value[1]:.2f}, ..., {self._y.value[-2]:.2f}, {self._y.value[-1]:.2f}] {self._y_unit} {np.shape(self._y)}'
-                fstr2 = '(available) ' + ', '.join(map(str,[a for a in all_flux_defs if a != self._y_key])) # TODO add check for flux_defs being implemented 
-                betastr = f'beta: ?, Muv: ?, Lbol: ?'
-                # betastr = f'beta: {self.beta:.2f}, Muv: {self.Muv:.1f}, Lbol: ?'
-            width = config.cols-2
+                x = tree.add('[bold #6495ED not italic]x-axis[white]: [italic not bold]' + f'[green]{self._x_key}[white not italic]: [{self._x.value[0]:.2f}, {self._x.value[1]:.2f}, ..., {self._x.value[-2]:.2f}, {self._x.value[-1]:.2f}] [green]{self._x_unit} [dark_red]{np.shape(self._x)}')
+            
+            impl = [f for f in self._x_implemented if f != self._x_key]
+            x.add(f'available: [dark_green italic]{", ".join(impl)}')
+
+            y = tree.add('[bold #6495ED not italic]y-axis[white]: [italic not bold]' + f'[green]total[white not italic]: [{self._y['total'].value[0]:.2f}, {self._y['total'].value[1]:.2f}, ..., {self._y['total'].value[-2]:.2f}, {self._y['total'].value[-1]:.2f}] [green]{self._y_unit} [dark_red]{np.shape(self._y['total'])}')
+            for name, value in self._y.items():
+                if name == 'total': continue
+                y.add(f'[green italic]{name}[white not italic]: [{value.value[0]:.2f}, {value.value[1]:.2f}, ..., {value.value[-2]:.2f}, {value.value[-1]:.2f}] [green]{self._y_unit} [dark_red]{np.shape(value)}')
+            
+            props = tree.add('[bold #6495ED not italic]properties[white]:')
+            props.add(f'[green]beta[white]: ?')
+            props.add(f'[green]Muv[white]: ?')
+            props.add(f'[green]Lbol[white]: ?')
         else:
             all_flux_defs = ['fnu','flam','Lnu','Llam','nufnu','lamflam','nuLnu','lamLlam']
             w = self.wav_rest
@@ -658,20 +682,21 @@ class SED:
                 fstr1 = f'{self._which_str} (base): [{f[0]:.2f}, {f[1]:.2f}, ..., {f[-2]:.2f}, {f[-1]:.2f}] {np.shape(f)}'
                 fstr2 = '(available) ' + ', '.join(map(str,[a for a in all_flux_defs if a != self._which_str])) 
                 betastr = f'beta: {self.beta:.2f}, Muv: {self.Muv:.1f}, Lbol: ?'
-            width = config.cols-2
+
+
         # width = np.max([width, len(wstr)+4])
         # border_chars = '═║╔╦╗╠╬╣╚╩╝'
-        outstr = border_chars[2] + border_chars[0]*width + border_chars[4]
-        outstr += '\n' + border_chars[1] + 'BRISKET-SED'.center(width) + border_chars[1]
-        outstr += '\n' + border_chars[5] + border_chars[0]*width + border_chars[7]
-        outstr += '\n' + border_chars[1] + wstr.center(width) + border_chars[1]
-        outstr += '\n' + border_chars[5] + border_chars[0]*width + border_chars[7]
-        outstr += '\n' + border_chars[1] + fstr1.center(width) + border_chars[1]
-        outstr += '\n' + border_chars[1] + fstr2.center(width) + border_chars[1]
-        outstr += '\n' + border_chars[5] + border_chars[0]*width + border_chars[7]
-        outstr += '\n' + border_chars[1] + betastr.center(width) + border_chars[1]
-        outstr += '\n' + border_chars[8] + border_chars[0]*width + border_chars[10]
-        return outstr
+        # outstr = border_chars[2] + border_chars[0]*width + border_chars[4]
+        # outstr += '\n' + border_chars[1] + 'BRISKET-SED'.center(width) + border_chars[1]
+        # outstr += '\n' + border_chars[5] + border_chars[0]*width + border_chars[7]
+        # outstr += '\n' + border_chars[1] + wstr.center(width) + border_chars[1]
+        # outstr += '\n' + border_chars[5] + border_chars[0]*width + border_chars[7]
+        # outstr += '\n' + border_chars[1] + fstr1.center(width) + border_chars[1]
+        # outstr += '\n' + border_chars[1] + fstr2.center(width) + border_chars[1]
+        # outstr += '\n' + border_chars[5] + border_chars[0]*width + border_chars[7]
+        # outstr += '\n' + border_chars[1] + betastr.center(width) + border_chars[1]
+        # outstr += '\n' + border_chars[8] + border_chars[0]*width + border_chars[10]
+        # return outstr
         # if np.ndim(f) == 1:
             # if len(self.wav_rest) > 4:
             #     wstr = f'[{w[0]:.2f}, {w[1]:.2f}, ..., {w[-2]:.2f}, {w[-1]:.2f}] {config.default_wavelength_unit}'
@@ -694,6 +719,11 @@ class SED:
         #     fstr += str(np.shape(f))
 
         #     return f'''BRISKET-SED: wav: {wstr}\n             fnu: {fstr}'''
+        return '\n' + rich_str(tree)
+
+    @property
+    def ndim(self):
+        return np.ndim(self._y['total'])
 
     def __str__(self):
         return self.__repr__()
@@ -743,17 +773,19 @@ class SED:
         
 
     def measure_window_luminosity(self, window):
-        pass
+        return NotImplemented
 
     def measure_monochromatic_luminosity(self):
-        pass
+        return NotImplemented
+
     def measure_slope(self):
-        pass
+        return NotImplemented
 
     ########################################################################################################################
     @property
     def fourPiLumDistSq(self):
         return 4*np.pi*self.luminosity_distance**2
+
     @property
     def Lbol(self) -> Quantity:
         '''
@@ -1005,13 +1037,17 @@ class SED:
             sed (SED)
                 SED object.
         """
-        return np.shape(sed._y)
+        return np.shape(sed._y['total'])
 
     @property 
     def T(self):
         newobj = deepcopy(self)
         newobj._y = np.transpose(self._y)
         return newobj
+
+    @property 
+    def components(self):
+        return list(self._y.keys())
 
 
 if __name__ == '__main__':
@@ -1022,8 +1058,14 @@ if __name__ == '__main__':
     fnu[wav_rest<1216*u.angstrom] *= 0
 
     sed = SED(wav_rest=wav_rest, total=fnu, redshift=7, verbose=True)
+    sed['young'] = fnu / 2
+
     # print(sed._x_implemented)
-    sed.convert_units(xunit=u.micron, yunit=u.mJy)
-    print(sed['wav_obs'])
-    print(sed['total'])
+    # sed.convert_units(xunit=u.micron, yunit=u.mJy)
+    # print(sed['wav_obs'])
+    # print(sed['total'])
+
+    # print(sed['young'])
+    # print(sed.components)
     # print(sed._y['total'].unit)
+    print(sed)

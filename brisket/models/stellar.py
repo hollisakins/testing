@@ -92,10 +92,10 @@ class GriddedStellarModel(BaseGriddedModel, BaseSourceModel):
         """
 
         # TODO compute sfh_ceh from input SFH parameters
-        sfh_ceh_weights = np.zeros(grid.shape)
+        self.grid_weights = np.zeros(grid.shape)
         for (sfh_name, sfh), sfh_weight in zip(self.sfh_components.items(), self.sfh_weights):
             sfh.update(params[sfh_name], weight=sfh_weight)
-            sfh_ceh_weights += sfh.combined_weights
+            self.grid_weights += sfh.combined_weights
 
         # split the grid into young and old components at t_bc
         # (have to account for the grid age spacing)
@@ -110,12 +110,12 @@ class GriddedStellarModel(BaseGriddedModel, BaseSourceModel):
         grid_old = self.grid[self.grid.age >= t_bc]
         weight_old = 1-weight_young
 
-        sfh_ceh_young = copy(sfh_ceh[:, :index])
+        sfh_ceh_young = copy(self.grid_weights[:, :index])
         sfh_ceh_young[:, index-1] *= weight_young
         grid_young.collapse(axis=('zmet','age'), weights=sfh_ceh_young, inplace=True)
         young = grid_young.to_SED()
 
-        sfh_ceh_old = copy(sfh_ceh[:, index-1:])
+        sfh_ceh_old = copy(self.grid_weights[:, index-1:])
         sfh_ceh_old[:, index-1] *= weight_old
         grid_old.collapse(axis=('zmet','age'), weights=sfh_ceh_old, inplace=True)
         old = grid_old.to_SED()

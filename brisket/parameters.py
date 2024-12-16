@@ -346,9 +346,10 @@ class Params:
 
 
 class Group(Params):
-    def __init__(self, name, model, parent=None):
+    def __init__(self, name, model_func, parent=None):
         self.name = name
-        self.model = model
+        self.model = None # self.model gets filled in when initialized
+        self.model_func = model_func
         self.parent = parent
         
         self._components = {}
@@ -363,16 +364,16 @@ class Group(Params):
         raise Exception('can only add source to base Params object')
 
     def add_sfh(self, name, model=None):
-        if not (self.name=='galaxy' and self.model.type=='source'):
+        if not (self.name=='galaxy' and self.model_func.type=='source'):
             raise Exception('SFH is special, can only be added to galaxy source')
         sfh = Group(name, model=model, parent=self)
         self.__setitem__(name, sfh)
 
     def __repr__(self):
         try:
-            return f"Group(name='{self.name}', model={self.model.__name__})"
+            return f"Group(name='{self.name}', model={self.model_func.__name__})"
         except:
-            return f"Group(name='{self.name}', model={self.model.__class__.__name__})"
+            return f"Group(name='{self.name}', model={self.model_func.__class__.__name__})"
 
     def __getitem__(self, key):
         if key in self._components: # getting a component/group

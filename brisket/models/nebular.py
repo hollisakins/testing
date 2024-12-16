@@ -12,6 +12,8 @@ from ..utils.sed import SED
 from ..grids.grids import Grid
 from .base import *
 
+from copy import deepcopy
+
 
 def Gaussian(x, L, mu, fwhm, fwhm_unit='A'):
     if fwhm_unit=='A':
@@ -31,9 +33,33 @@ class GriddedNebularModel(BaseGriddedModel, BaseReprocessorModel):
     stellar models.
     """
 
-    def __init__(self, params):
-        self.logger = logger
+    def __init__(self, params, parent=None):
+
+        if parent is None: 
+            # Nebular model is being called as a standalone model, not associated with a stellar model
+            raise Exception('GriddedNebularModel must be associated with a GriddedStellarModel')
+        self.parent = parent
         
+        if 'line_grid' not in self.params:
+            self.logger.info('No nebular line grid specified, defaulting to ...')
+        if 'cont_grid' not in self.params:
+            self.logger.info('No nebular continuum grid specified, defaulting to ...')
+
+        self.star_grid = deepcopy(self.parent.grid)
+        self.line_grid = Grid(str(params['line_grid']))
+        self.cont_grid = Grid(str(params['cont_grid']))
+        neb_axes = [a for a in self.line_grid.axes if a not in ['zmet','age']]
+        for a in neb_axes:
+            assert a in self.params, f"Must provide {a} in nebular params"
+        self.interp_params = {a: float(self.params[a]) for a in neb_axes}
+        
+        
+        # restrict the stellar grid (nebular grids are only computed for certain (young) stellar ages)
+        self.grid_weights = self.parent.grid_weights
+        self.grid_weights[self.star_grid.age < np.max(self.line_grid.age)]
+        for i in range(self.star_grid.ndim):
+            assert self.grid_weights.shape[i] == self.line_grid.shape[i] == self.cont_grid.shape[i]
+
         # self.metallicities = config.stellar_models[self.model]['metallicities']
         # self.logU = config.nebular_models[self.model]['logU']
         # self.neb_ages = config.nebular_models[self.model]['neb_ages']
@@ -48,6 +74,32 @@ class GriddedNebularModel(BaseGriddedModel, BaseReprocessorModel):
         return incident_sed, None
     
     def emit(self, params):
+
+        self.cont_grid.collapse(axis=('zmet','age'), weights=self.grid_weights, inplace=True)
+        self.cont_grid.interpolate(self.interp_params, inplace=True)
+        
+        self.line_grid.collapse(axis=('zmet','age'), weights=self.grid_weights, inplace=True)
+        self.line_grid.interpolate(self.interp_params, inplace=True)
+
+
+        dwav = np.diff(self.wavelengths)
+        for i in range(len(self.line_grid.wavelengths)):
+            j = np.argmin(np.abs(self.wavelengths - self.line_grid.wavelengths[i]))
+
+            
+            Gaussian(self.wavelengths, L=self.line_grid[i], mu=self.line_grid.wavelengths[i], fwhm="", fwhm_unit='kms')
+
+            sigma = mu * fwhm/2.998e5 / 2.355
+
+        # for i in range(config.line_wavs.shape[0]):
+        #     ind = np.abs(self.wavelengths - config.line_wavs[i]).argmin()
+        #     if ind != 0 and ind != self.wavelengths.shape[0]-1:
+        #         for j in range(self.metallicities.shape[0]):
+        #             for k in range(self.logU.shape[0]):
+        #                 for l in range(self.neb_ages.shape[0]):
+        #                     comb_grid[:, j, k, l] += self._gauss(self.wavelengths, line_grid[i, j, k, l], config.line_wavs[i], fwhm, fwhm_unit='kms')
+
+        
         pass
 
 
