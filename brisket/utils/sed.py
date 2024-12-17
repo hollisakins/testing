@@ -128,13 +128,11 @@ class SED:
             self.units = self.units and hasattr(total, "unit")
 
         # perform some checks
+        assert all([hasattr(c, "__len__") for c in self._y.values()]), "All SED components must be iterable."
         assert len(set([len(c) for c in self._y.values()])) == 1, "All SED components must have the same length."
         if self.units:
             assert len(set([self._check_y_type(c.unit) for c in self._y.values()])) == 1, "All SED components must have the same physical type."
             assert len(set([c.unit for c in self._y.values()])) == 1, "All SED components must have the same units."
-
-
-
 
         if self.filters is not None and self.units: 
             pass
@@ -145,7 +143,7 @@ class SED:
             if self.redshift == 0:
                 self.luminosity_distance = 10 * u.pc
             else:
-                self.luminosity_distance = config.cosmo.luminosity_distance(self.redshift).to(u.pc)
+                self.luminosity_distance = config.cosmo.luminosity_distance(self.redshift).to(Unit('pc'))
             if not self.units:
                 self.luminosity_distance = self.luminosity_distance.value
         else:

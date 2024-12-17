@@ -13,7 +13,9 @@ from rich.tree import Tree
 from . import config
 from .fitting import priors
 from .console import console, setup_logger, PathHighlighter, LimitsHighlighter
-from .models import PowerlawAccrectionDiskModel, InoueIGMModel, SpectralCalibrationModel
+from .models.agn import PowerlawAccrectionDiskModel
+from .models.igm import InoueIGMModel
+from .models.calibration import SpectralCalibrationModel
 
 '''Default models to use for for different components.'''
 model_defaults = {'agn':PowerlawAccrectionDiskModel, 
@@ -68,7 +70,7 @@ class Params:
         self.linked_params = {}
         self.validated = False
 
-    def add_group(self, name, model=None):
+    def add_group(self, name, model_func=None):
         '''
         Add a group to the Params object. Groups are used to organize parameters into... well, groups.
 
@@ -79,7 +81,7 @@ class Params:
                 The model class to use for this group of parameters. If not specified, the 
                 model will be chosen based on the name of the group based on the model_defaults dict. 
         '''
-        if model is None:
+        if model_func is None:
             model_def = None
             for key in model_defaults:
                 if key in name:
@@ -87,28 +89,28 @@ class Params:
                     break
             if model_def is None:
                 raise Exception(f'No default model for source {name}, please specify model')
-            model = model_def
-        group = Group(name, model, parent=self)
+            model_func = model_def
+        group = Group(name, model_func, parent=self)
         self.__setitem__(name, group)
 
     add_source = add_group
 
     # specific, commongly used models
-    def add_nebular(self, model=None):
+    def add_nebular(self, model_func=None):
         """Alias for adding a 'nebular' group."""
-        self.add_group('nebular', model=model)
+        self.add_group('nebular', model_func=model_func)
 
-    def add_dust(self, model=None):
+    def add_dust(self, model_func=None):
         """Alias for adding a 'dust' group."""
-        self.add_group('dust', model=model)
+        self.add_group('dust', model_func=model_func)
     
-    def add_igm(self, model=None):
+    def add_igm(self, model_func=None):
         """Alias for adding a 'igm' group."""
-        self.add_group('igm', model=model)
+        self.add_group('igm', model_func=model_func)
         
-    def add_calibration(self, model=None):
+    def add_calibration(self, model_func=None):
         """Alias for adding a 'calibration' group."""
-        self.add_group('calibration', model=model)
+        self.add_group('calibration', model_func=model_func)
 
     ##############################
     def __setitem__(self, key, value):
@@ -133,8 +135,8 @@ class Params:
         elif isinstance(value, Group): # adding a group, add to self._components
             # assert isintance(self, Params) or self.model_type=='source', ""
             self._components[key] = value
-            self._component_types[key] = value.model.type
-            self._component_orders[key] = value.model.order
+            self._component_types[key] = value.model_func.type
+            self._component_orders[key] = value.model_func.order
             # self.all_params.update({key+'/'+k:v for k,v in value.all_params.items()})
             # self.free_params.update({key+'/'+k:v for k,v in value.free_params.items()})
             
@@ -184,6 +186,18 @@ class Params:
             return self._components[key]
         elif key in self.all_params: # getting a parameter from the base Params object
             return self.all_params[key]
+        else:
+            raise Exception(f"No key {key} found in {self}")
+    
+    def __delitem__(self, key):
+        if key in self._components:
+            del self._components[key]
+            del self._component_types[key]
+            del self._component_orders[key]
+        elif key in self.all_params:
+            del self.all_params[key]
+            if key in self.free_params:
+                del self.free_params[key]
         else:
             raise Exception(f"No key {key} found in {self}")
 
@@ -360,13 +374,13 @@ class Group(Params):
         self.free_params = {} 
         self.linked_params = {}
 
-    def add_source(self, name, model=None):
+    def add_source(self, name, model_func=None):
         raise Exception('can only add source to base Params object')
 
-    def add_sfh(self, name, model=None):
+    def add_sfh(self, name, model_func=None):
         if not (self.name=='galaxy' and self.model_func.type=='source'):
             raise Exception('SFH is special, can only be added to galaxy source')
-        sfh = Group(name, model=model, parent=self)
+        sfh = Group(name, model_func=model_func, parent=self)
         self.__setitem__(name, sfh)
 
     def __repr__(self):

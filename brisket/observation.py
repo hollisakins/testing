@@ -169,9 +169,9 @@ class Photometry(SED):
                 fnu *= fnu_units
             if fnu_err is not None:
                 fnu_err *= fnu_units
-                args = {'filters':self.filters, 'fnu':fnu, 'fnu_err':fnu_err, 'verbose':verbose, 'units':True}
+                args = {'filters':self.filters, 'fnu':fnu, 'fnu_err':fnu_err, 'verbose':verbose}
             else:
-                args = {'filters':self.filters, 'fnu':fnu, 'verbose':verbose, 'units':True}
+                args = {'filters':self.filters, 'fnu':fnu, 'verbose':verbose}
         elif flam is not None:
             if not hasattr(flam, 'unit'):
                 if isinstance(flam_units, str):
@@ -179,11 +179,11 @@ class Photometry(SED):
                 flam *= flam_units
             if flam_err is not None:
                 flam_err *= fnu_units
-                args = {'filters':self.filters, 'flam':flam, 'flam_err':flam_err, 'verbose':verbose, 'units':True}
+                args = {'filters':self.filters, 'flam':flam, 'flam_err':flam_err, 'verbose':verbose}
             else:
-                args = {'filters':self.filters, 'flam':flam, 'verbose':verbose, 'units':True}
+                args = {'filters':self.filters, 'flam':flam, 'verbose':verbose}
         else:
-            args = {'filters':self.filters, 'verbose':verbose, 'units':True}
+            args = {'filters':self.filters, 'verbose':verbose}
         super().__init__(**args, **kwargs)
 
     @property

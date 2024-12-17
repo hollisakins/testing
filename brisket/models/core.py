@@ -102,12 +102,12 @@ class Model(object):
         self.components = self.params.components
         for comp_name, comp_params in self.components.items(): 
             # initialize the model
-            comp_params.model = comp_params.model_func(comp_params) 
+            comp_params.model = comp_params.model_func(comp_params, verbose=self.verbose) 
             comp_params.model.resample(self.wavelengths) # resample the model
 
             subcomps = comp_params.components
             for subcomp_name, subcomp_params in subcomps.items():
-                subcomp_params.model = subcomp_params.model_func(subcomp_params, parent=comp_params.model)
+                subcomp_params.model = subcomp_params.model_func(subcomp_params, parent=comp_params.model, verbose=self.verbose)
                 subcomp_params.model.resample(self.wavelengths)
             
             # then validate that sub-components were added correctly (only used by certain models)
@@ -145,7 +145,7 @@ class Model(object):
         The compute_photometry and compute_spectrum methods generate observables 
         using this internal full spectrum. """
 
-        self._sed = SED(wav_rest=self.wavelengths, redshift=self.redshift, verbose=self.verbose, units=False)
+        self._sed = SED(wav_rest=self.wavelengths, redshift=self.redshift, verbose=self.verbose)
 
         for comp_name, comp_params in self.components.items():
             model = comp_params.model

@@ -45,7 +45,10 @@ class BaseSFHModel:
     type = 'sfh'
     order = 0
 
-    def __init__(self, params):
+    def __init__(self, params, parent, verbose=False):
+        self.params = params
+        self.parent = parent
+
         self.hubble_time = 13.78
         
         # self.template_metallicities = config.stellar_models[model]['metallicities']
@@ -61,12 +64,12 @@ class BaseSFHModel:
         self.age_widths = np.diff(self.age_bins)
 
         self.sfh = np.zeros_like(self.ages)
-        self.grid = params.parent.model.grid
-        self.weights = np.zeros_like(self.grid.ages)
-        self.ceh = ChemicalEnrichmentHistoryModel(params.parent)
+        self.grid = self.parent.grid
+        self.weights = np.zeros_like(self.grid.age)
+        self.ceh = ChemicalEnrichmentHistoryModel(self.parent.params, grid=self.grid)
 
         # self.update(params)
-    def _resample(self, _):
+    def resample(self, _):
         pass
 
     def update(self, params, weight=1):
@@ -84,7 +87,7 @@ class BaseSFHModel:
         # self.sfh /= mass_norm
 
         # Sum up contributions to each age bin to create SSP weights
-        self.sfh_weights, _ = np.histogram(self.ages, bins=params.parent.model.grid_age_bins, weights=self.sfh * self.age_widths)
+        self.sfh_weights, _ = np.histogram(self.ages, bins=self.grid.age_bins, weights=self.sfh * self.age_widths)
 
         # Check no stars formed before the Big Bang.
         if self.sfh[self.ages > self.age_of_universe].max() > 0.:
@@ -173,12 +176,12 @@ class BurstSFH(BaseSFHModel):
 
 class ConstantSFH(BaseSFHModel):
     """ Constant star-formation between some limits. """
-    def __init__(self, params):
-        self._build_defaults(params)
-        super().__init__(params)
+    # def __init__(self, params, parent):
+    #     self._build_defaults(params)
+    #     super().__init__(params, parent)
 
-    def _build_defaults(self, params):
-        pass
+    # def _build_defaults(self, params):
+    #     pass
 
     def sfr(self, ages, params):
         sfr = np.zeros_like(ages)
@@ -441,8 +444,8 @@ class ChemicalEnrichmentHistoryModel(object):
     """
     Base class for chemical enrichment history models.
     """
-    def __init__(self, params):
-        self.zmet_vals = self.grid.zmet
+    def __init__(self, params, grid):
+        self.zmet_vals = grid.zmet
         # self.zmet_lims = utils.make_bins(self.zmet_vals, fix_low=0, fix_high=10)
 
     def compute_weights(self, params, sfh_weights):

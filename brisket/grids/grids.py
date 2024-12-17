@@ -7,6 +7,7 @@ from typing import Tuple
 from .manager import GridManager
 from .. import config
 from ..utils.sed import SED
+from spectres import spectres
 
 from scipy.interpolate import RegularGridInterpolator
 
@@ -25,7 +26,7 @@ class Grid:
 
     def _load_from_hdf5(self, path):
         with h5py.File(path, 'r') as f:
-            axes = np.array(f['axes'][:],dtype=str)
+            axes = list(f['axes'].asstr(encoding='utf-8'))
             assert axes[-1] == 'wavs'
             self.wavs = f['wavs'][:]
             self.data = f['grid'][:]
@@ -33,7 +34,10 @@ class Grid:
             self.array_axes = axes
             for axis in self.axes:
                 setattr(self, axis, f[axis][:])
-    
+            for key in f.keys():
+                if key not in axes + ['grid', 'wavs', 'axes']:
+                    setattr(self, key, f[key][:])
+
     @property 
     def shape(self):
         return self.data.shape[:-1] # remove the last axis, which is the SED
@@ -62,9 +66,9 @@ class Grid:
 
 
     def resample(self, new_wavs, fill=0):
-        new_data = spectres.spectres(new_wavs, self.wavs, self.data, fill=fill, verbose=False) 
+        new_data = spectres(new_wavs, self.wavs, self.data, fill=fill, verbose=False) 
         self.wavs = new_wavs
-        return self.new_data
+        return new_data
 
     def get_nearest(self, x, return_nearest=False):
         '''
@@ -161,7 +165,7 @@ class Grid:
         else:
             if weights is None:
                 weights = np.ones(self.shape)
-            assert weights.shape == self.shape #tuple([self.shape[i] for i in axis_indices])
+            assert weights.shape == self.shape, f'Cannot apply weights of shape {weights.shape} to grid of shape {self.shape}'
 
         weights = np.expand_dims(weights, axis=-1)
 

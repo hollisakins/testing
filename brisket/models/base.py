@@ -1,6 +1,8 @@
 '''
 Base model classes. 
 '''
+class BrisketError(Exception):
+    pass
 
 class BaseModel:
     '''Base model class. All brisket models should inherit from this class, or one of its subclasses.'''
