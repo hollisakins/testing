@@ -145,34 +145,34 @@ class Model(object):
         The compute_photometry and compute_spectrum methods generate observables 
         using this internal full spectrum. """
 
-        self._sed = SED(wav_rest=self.wavelengths, redshift=self.redshift, verbose=self.verbose)
+        self.sed = SED(wav_rest=self.wavelengths, redshift=self.redshift, verbose=self.verbose)
 
         for comp_name, comp_params in self.components.items():
             model = comp_params.model
             if model.type == 'source':
                 sed_incident = model.emit(comp_params)
-                self._sed += sed_incident
-
+                self.sed += sed_incident
                 # sources can have sub-components, e.g. nebular emission or dust
                 for subcomp_name, subcomp_params in comp_params.components.items():
                     submodel = subcomp_params.model
                     if submodel.type == 'reprocessor':
-                        sed_transmitted, emission_params = submodel.absorb(self._sed, subcomp_params)
-                        self._sed = sed_transmitted + submodel.emit(emission_params)
+                        sed_transmitted, emission_params = submodel.absorb(self.sed, subcomp_params)
+                        self.sed = sed_transmitted + submodel.emit(emission_params)
 
                     if submodel.type == 'absorber':
-                        sed_transmitted = submodel.absorb(self._sed, subcomp_params)
-                        self._sed = sed_transmitted
+                        sed_transmitted = submodel.absorb(self.sed, subcomp_params)
+                        self.sed = sed_transmitted
             
             # reprocessors and absorbers can be standalone models, as well
             if model.type == 'reprocessor':
-                sed_transmitted, emission_params = model.absorb(self._sed, comp_params)
-                self._sed = sed_transmitted + model.emit(emission_params)
+                sed_transmitted, emission_params = model.absorb(self.sed, comp_params)
+                self.sed = sed_transmitted + model.emit(emission_params)
 
             if model.type == 'absorber':
-                sed_transmitted = model.absorb(self._sed, comp_params)
-                self._sed = sed_transmitted
+                sed_transmitted = model.absorb(self.sed, comp_params)
+                self.sed = sed_transmitted
 
+        self.sed.assign_units(xunit=u.angstrom, yunit=u.Lsun/u.angstrom, inplace=True)
         # # Optionally divide the model by a polynomial for calibration.
         # if "calib" in list(self.fit_instructions):
         #     self.calib = calib_model(self.model_components["calib"],
@@ -198,6 +198,7 @@ class Model(object):
                 w = wavelengths[-1]
                 wavelengths.append(w*(1.+0.5/R_default))
             wavelengths = np.array(wavelengths)
+            R = np.zeros_like(wavelengths) + R_default
 
         else:
             sig = 3
@@ -315,9 +316,13 @@ class Model(object):
 
     #     return spectrum
 
-    @property
-    def sed(self):
-        return SED(wav_rest=self.wavelengths * u.angstrom, Llam=self._sed._y * u.Lsun/u.angstrom, redshift=self.redshift, verbose=False)
+    # @property
+    # def sed(self):
+    #     if hasattr(self, '_sed_w_unitss'):
+    #         return self._sed_w_units
+    #     else:
+    #         self._sed_w_units = self._sed.assign_units(xunit=u.angstrom, yunit=u.Lsun/u.angstrom, inplace=False)
+    #     return sed
 
     # @property
     # def spectrum(self):

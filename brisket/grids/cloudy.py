@@ -711,12 +711,10 @@ def extract_cloudy_results(dir, filename, input_wav, input_flux):
     lines = np.loadtxt(f"{dir}/{filename}.lines", usecols=(1), delimiter="\t", skiprows=2)
     cont_wav, cont_incident, cont_flux, cont_lineflux = np.loadtxt(f"{dir}/{filename}.cont", usecols=(0, 1, 3, 8)).T
     cont_wav = np.flip(cont_wav)
-    # cont_incident = np.flip(cont_incident)
     cont_flux = np.flip(cont_flux)
     cont_lineflux = np.flip(cont_lineflux)
 
     # Convert cloudy fluxes from erg/s to Lsun
-    # cont_incident /= 3.826e39
     lines /= 3.826e33
     cont_flux /= 3.826e33
     cont_lineflux /= 3.826e33
@@ -724,32 +722,24 @@ def extract_cloudy_results(dir, filename, input_wav, input_flux):
     # subtract lines from nebular continuum model
     cont_flux -= cont_lineflux
 
-
-    # cont_flux *= np.trapezoid(input_flux, x=input_wav)/np.trapezoid(cont_incident, x=cont_wav)
-    # cont_incident *= np.trapezoid(input_flux, x=input_wav)/np.trapezoid(cont_incident, x=cont_wav)
-    # lines /= 3.826e33
-    
     # continuum from Lsun to Lsun/A.
-    # cont_flux /= cont_wav
-    # cont_incident /= cont_wav
+    cont_flux /= cont_wav
 
-    cont_flux[cont_wav < 911.8] = 1e-99
+    cont_flux[cont_wav < 911.8] = 0
 
     # # Total ionizing flux in the input model
-    # ionizing_spec = input_flux[input_wav <= 911.8]
-    # ionizing_wavs = input_flux[input_wav <= 911.8]
-    # input_ionizing_flux = np.trapezoid(ionizing_spec, x=ionizing_wavs)
+    ionizing_spec = input_flux[input_wav <= 911.8]
+    ionizing_wavs = input_flux[input_wav <= 911.8]
+    input_ionizing_flux = np.trapezoid(ionizing_spec, x=ionizing_wavs)
 
     # # Total ionizing flux in the cloudy outputs
-    # cloudy_ionizing_flux = np.sum(lines) + np.trapezoid(cont_flux, x=cont_wav)
-    # print(input_ionizing_flux/cloudy_ionizing_flux)
+    cloudy_ionizing_flux = np.sum(lines) + np.trapezoid(cont_flux, x=cont_wav)
 
     # # Normalise cloudy fluxes to the level of the input model
-    # lines *= input_ionizing_flux/cloudy_ionizing_flux
-    # cont_flux *= input_ionizing_flux/cloudy_ionizing_flux
+    lines *= input_ionizing_flux/cloudy_ionizing_flux
+    cont_flux *= input_ionizing_flux/cloudy_ionizing_flux
 
     # Resample the nebular continuum onto wavelengths of stellar models
-    # cont_incident = np.interp(input_wav, cont_wav, cont_incident)
     cont_flux = np.interp(input_wav, cont_wav, cont_flux)
     return cont_flux, lines
 
@@ -804,7 +794,7 @@ if __name__ == "__main__":
 
     if 'age' in grid.axes: # TODO FIX NAMING OF AGES IN GRID FILES
         if rank==0: logger.info(f'Shrinking grid to only include ages less than age_lim = {params["age_lim"]} Myr')
-        age_axis = np.where(grid.array_axes=='age')[0][0]
+        age_axis = grid.array_axes.index('age')
         indices = np.where(grid.age <= params['age_lim']*1e6)[0]
         grid.data = np.take(grid.data, indices, axis=age_axis)
         grid.age = grid.age[grid.age <= params['age_lim']*1e6]
@@ -897,14 +887,14 @@ if __name__ == "__main__":
 
 
         if 'zmet' in grid.axes: 
-            zmet_index = np.where(grid.axes == 'zmet')[0][0]
+            zmet_index = grid.axes.index('zmet')
             zmet = grid.zmet[input_grid_index[zmet_index]]
             params['zmet'] = zmet
         else:
             raise Exception('grid needs to have metallicity (for now)')
 
         # export the SED to a file that cloudy can read
-        make_cloudy_sed_file(cloudy_sed_dir, filename, wavs, grid[input_grid_index])
+        make_cloudy_sed_file(cloudy_sed_dir, filename, wavs, grid.data[input_grid_index])
 
         # create the cloudy input file, using the params
         make_cloudy_input_file(base_dir, filename=filename, params=params)
@@ -930,8 +920,6 @@ if __name__ == "__main__":
         os.chdir(config.grid_dir)
         n_current += 1
 
-        break
-    quit()
     
     if params['MPI']:
         # Combine arrays of models assigned to cores, checks all is finished

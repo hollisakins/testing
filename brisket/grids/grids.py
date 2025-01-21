@@ -65,10 +65,15 @@ class Grid:
         return f'Grid({self.name}, shape={self.shape})'
 
 
-    def resample(self, new_wavs, fill=0):
+    def resample(self, new_wavs, fill=0, inplace=True):
         new_data = spectres(new_wavs, self.wavs, self.data, fill=fill, verbose=False) 
         self.wavs = new_wavs
-        return new_data
+        if inplace:
+            self.data = new_data
+            return
+        else:
+            return new_data
+
 
     def get_nearest(self, x, return_nearest=False):
         '''
@@ -114,10 +119,10 @@ class Grid:
         x = [params.get(axis, None) for axis in self.axes]
 
         if inplace:
-            for i in self._interpolator_axes:
-                delattr(self, self.axes[i])
-            self.axes = [a for i,a in enumerate(self.axes) if i not in self._interpolator_axes]
-            self.array_axes = [a for i,a in enumerate(self.array_axes) if i not in self._interpolator_axes]
+            for axis in self._interpolator_axes:
+                delattr(self, axis)
+            self.axes = [a for a in self.axes if a not in self._interpolator_axes]
+            self.array_axes = [a for a in self.array_axes if a not in self._interpolator_axes]
 
             self.data = self._interpolator(x)
             return 
@@ -165,7 +170,16 @@ class Grid:
         else:
             if weights is None:
                 weights = np.ones(self.shape)
-            assert weights.shape == self.shape, f'Cannot apply weights of shape {weights.shape} to grid of shape {self.shape}'
+            else:
+
+                for i,j in enumerate(axis_indices):
+                    assert weights.shape[i] == self.shape[j], f'Cannot apply {weights.shape[i]} weights to axis {axis[j]} with length {self.shape[j]}'
+
+                for dim in range(self.ndim):
+                    if dim not in axis_indices:
+                        weights = np.expand_dims(weights, axis=dim)                
+
+                # assert weights.shape == self.shape, f'Cannot apply weights of shape {weights.shape} to grid of shape {self.shape}'
 
         weights = np.expand_dims(weights, axis=-1)
 

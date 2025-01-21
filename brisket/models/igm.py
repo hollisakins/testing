@@ -54,19 +54,19 @@ class InoueIGMModel(BaseGriddedModel, BaseAbsorberModel):
     order = 10  # Define the order of operations for this model
     # TODO could define defaults as class variables
 
-    def __init__(self, params):
-        self._build_defaults(params)
+    def __init__(self, params, verbose=False):
+        self.validate_params(params)
         super().__init__(params)
 
-    def _build_defaults(self, params):
+    def validate_params(self, params):
         self.igm_redshifts = np.arange(0.0, config.max_redshift + 0.01, 0.01)
         self.igm_wavelengths = np.arange(1.0, 1225.01, 1.0)
         self.raw_igm_grid = fits.open(config.grid_dir + "/d_igm_grid_inoue14.fits")[1].data
 
-    def _validate_components(self, params):
+    def validate_components(self, params):
         pass
 
-    def _resample(self, wavelengths):
+    def resample(self, wavelengths):
         """ Resample the raw grid to the input wavelengths. """
         self.wavelengths = wavelengths
 

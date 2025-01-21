@@ -49,8 +49,8 @@ R_curves.update(**dict.fromkeys(['JWST_NIRSpec_G395M', 'NIRSpec_G395M', 'G395M']
 #TODO add the rest of the JWST resolution curves
 
 
-fwhm = 500
-'''Default FWHM of nebular lines, in km/s (TODO: is this implemented?)'''
+fwhm = 300
+'''Default FWHM of nebular lines, in km/s'''
 
 max_wavelength = 1 * cm
 '''Maximum wavelength at which the full SED models are computed.'''

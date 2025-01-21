@@ -156,7 +156,6 @@ class CompositeStellarPopModel(BaseGriddedModel, BaseSourceModel):
         sfh_ceh_young = copy(self.grid_weights[:, :index])
         sfh_ceh_young[:, index-1] *= weight_young
         grid_young.collapse(axis=('zmet','age'), weights=sfh_ceh_young, inplace=True)
-        # young = grid_young.to_SED()
         young = grid_young.data
 
         sfh_ceh_old = copy(self.grid_weights[:, index:])

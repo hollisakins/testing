@@ -1,4 +1,4 @@
-MPI = false
+MPI = true
 
 # incident spectrum
 grid = 'bc03_miles_chabrier_a50'

@@ -11,6 +11,7 @@ from ..utils import utils
 from ..utils.sed import SED
 from ..grids.grids import Grid
 from .base import *
+from ..console import setup_logger
 
 from copy import deepcopy
 
@@ -19,25 +20,36 @@ def Gaussian(x, L, mu, fwhm, fwhm_unit='A'):
     if fwhm_unit=='A':
         sigma = fwhm/2.355
         y = np.exp(-(x-mu)**2/(2*sigma**2))
-        y *= L/np.sum(y)
+        y *= L/np.trapezoid(y,x=x)
     if fwhm_unit=='kms':
         sigma = mu * fwhm/2.998e5 / 2.355
         y = np.exp(-(x-mu)**2/(2*sigma**2))
-        y *= L/np.trapz(y,x=x)
+        y *= L/np.trapezoid(y,x=x)
     return y
 
-class GriddedNebularModel(BaseGriddedModel, BaseReprocessorModel):
+class CloudyNebularModel(BaseGriddedModel, BaseReprocessorModel):
     """ Allows access to and maniuplation of nebular emission models.
     These must be pre-computed using Cloudy and the relevant set of
     stellar emission models. This has already been done for the default
     stellar models.
     """
+    type = 'reprocessor'
+    order = 20
 
-    def __init__(self, params, parent=None):
+    def __init__(self, params, parent=None, verbose=False):
+        self.params = params
+
+        self.verbose = verbose
+        if self.verbose:
+            self.logger = setup_logger(__name__, 'INFO')
+        else:
+            self.logger = setup_logger(__name__, 'WARNING')
+
+        
 
         if parent is None: 
             # Nebular model is being called as a standalone model, not associated with a stellar model
-            raise Exception('GriddedNebularModel must be associated with a GriddedStellarModel')
+            raise Exception('CloudyNebularModel must be associated with a stellar model')
         self.parent = parent
         
         if 'line_grid' not in self.params:
@@ -54,12 +66,6 @@ class GriddedNebularModel(BaseGriddedModel, BaseReprocessorModel):
         self.interp_params = {a: float(self.params[a]) for a in neb_axes}
         
         
-        # restrict the stellar grid (nebular grids are only computed for certain (young) stellar ages)
-        self.grid_weights = self.parent.grid_weights
-        self.grid_weights[self.star_grid.age < np.max(self.line_grid.age)]
-        for i in range(self.star_grid.ndim):
-            assert self.grid_weights.shape[i] == self.line_grid.shape[i] == self.cont_grid.shape[i]
-
         # self.metallicities = config.stellar_models[self.model]['metallicities']
         # self.logU = config.nebular_models[self.model]['logU']
         # self.neb_ages = config.nebular_models[self.model]['neb_ages']
@@ -68,29 +74,55 @@ class GriddedNebularModel(BaseGriddedModel, BaseReprocessorModel):
         # self.line_grid = config.nebular_models[self.model]['line_grid']
         # self.continuum_grid, self.line_grid, self.combined_grid = self._setup_cloudy_grids()
 
+    def resample(self, wavelengths):
+        """ Resamples the raw stellar grids to the input wavs. """
+        self.wavelengths = wavelengths
+        self.cont_grid.resample(self.wavelengths)
+
+
     def absorb(self, incident_sed, params):
         # TODO: incorporate absorption based on the CLOUDY-computed transmission
-        incident_sed[incident_sed.wav_rest < 911.8] = 0
+        incident_sed *= np.where(incident_sed.wav_rest < 911.8, 0, 1)
         return incident_sed, None
     
     def emit(self, params):
+        # restrict the stellar grid (nebular grids are only computed for certain (young) stellar ages)
+        self.grid_weights = self.parent.grid_weights
+        self.grid_weights = self.grid_weights[:, self.star_grid.age <= np.max(self.line_grid.age)]
+        for i in range(self.star_grid.ndim):
+            # print(self.grid_weights.shape[i], self.line_grid.shape[i], self.cont_grid.shape[i])
+            assert self.grid_weights.shape[i] == self.line_grid.shape[i] == self.cont_grid.shape[i]
+
 
         self.cont_grid.collapse(axis=('zmet','age'), weights=self.grid_weights, inplace=True)
         self.cont_grid.interpolate(self.interp_params, inplace=True)
-        
+        cont = self.cont_grid.data[0]
+
+
         self.line_grid.collapse(axis=('zmet','age'), weights=self.grid_weights, inplace=True)
         self.line_grid.interpolate(self.interp_params, inplace=True)
+        line_lum = self.line_grid.data[0]
+        fwhm_default = config.fwhm
 
 
-        dwav = np.diff(self.wavelengths)
+        lines = np.zeros_like(self.wavelengths)
         for i in range(len(self.line_grid.wavelengths)):
-            j = np.argmin(np.abs(self.wavelengths - self.line_grid.wavelengths[i]))
+            mu = self.line_grid.wavelengths[i]
+            j = np.argmin(np.abs(self.wavelengths - mu))
+            if j == 0 or j == self.wavelengths.shape[0]-1:
+                continue
+            dwav = (self.wavelengths[j+1] - self.wavelengths[j-1])/2
+            dwav_vel = dwav / mu * 2.998e5
 
+            if dwav_vel*3 > fwhm_default:
+                # add line to the single pixel closest to the line center
+                # print('adding line to the single pixel closest to the line center')
+                lines[j] += line_lum[i]
+            else:
+                # model the line as a Gaussian with the specified FWHM
+                # print(f'modeling line as a Gaussian dwav_vel*3 = {dwav_vel*3:.2f}')
+                lines += Gaussian(self.wavelengths, L=line_lum[i], mu=mu, fwhm=fwhm_default, fwhm_unit='kms')
             
-            Gaussian(self.wavelengths, L=self.line_grid[i], mu=self.line_grid.wavelengths[i], fwhm="", fwhm_unit='kms')
-
-            sigma = mu * fwhm/2.998e5 / 2.355
-
         # for i in range(config.line_wavs.shape[0]):
         #     ind = np.abs(self.wavelengths - config.line_wavs[i]).argmin()
         #     if ind != 0 and ind != self.wavelengths.shape[0]-1:
@@ -99,8 +131,9 @@ class GriddedNebularModel(BaseGriddedModel, BaseReprocessorModel):
         #                 for l in range(self.neb_ages.shape[0]):
         #                     comb_grid[:, j, k, l] += self._gauss(self.wavelengths, line_grid[i, j, k, l], config.line_wavs[i], fwhm, fwhm_unit='kms')
 
-        
-        pass
+       
+        sed = SED(wav_rest=self.wavelengths, nebular_cont=cont, nebular_lines=lines, nebular=cont+lines, total=cont+lines, verbose=False)
+        return sed
 
 
     def _setup_cloudy_grids(self):

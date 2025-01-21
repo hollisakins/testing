@@ -9,6 +9,7 @@ from . import igm
 from . import calibration
 
 from .stellar import CompositeStellarPopModel
+from .nebular import CloudyNebularModel
 from .agn import PowerlawAccrectionDiskModel
 from .sfh import ConstantSFH
 from .igm import InoueIGMModel
