@@ -149,8 +149,10 @@ class Photometry(SED):
                  flam_err: list | np.ndarray | u.Quantity = None, 
                  fnu_units: str | u.Unit = 'uJy',
                  flam_units: str | u.Unit = 'ergscm2a', 
-                 verbose: bool = False, **kwargs):
+                 verbose: bool = False, 
+                 **kwargs):
         
+        self.verbose = verbose
         self.filters = filters
         # self.fluxes = fluxes
         # self.errors = errors
@@ -162,6 +164,21 @@ class Photometry(SED):
         self.wav_min = self.filters.wav_min
         self.wav_max = self.filters.wav_max
 
+        self.update(fnu=fnu, fnu_err=fnu_err, 
+                    flam=flam, flam_err=flam_err, 
+                    fnu_units=fnu_units, flam_units=flam_units, **kwargs)
+
+        
+
+    def update(self, 
+               fnu: list | np.ndarray | u.Quantity = None, 
+               fnu_err: list | np.ndarray | u.Quantity = None, 
+               flam: list | np.ndarray | u.Quantity = None, 
+               flam_err: list | np.ndarray | u.Quantity = None, 
+               fnu_units: str | u.Unit = 'uJy',
+               flam_units: str | u.Unit = 'ergscm2a', 
+               **kwargs):
+
         if fnu is not None:
             if not hasattr(fnu, 'unit'):
                 if isinstance(fnu_units, str):
@@ -169,9 +186,9 @@ class Photometry(SED):
                 fnu *= fnu_units
             if fnu_err is not None:
                 fnu_err *= fnu_units
-                args = {'filters':self.filters, 'fnu':fnu, 'fnu_err':fnu_err, 'verbose':verbose}
+                args = {'filters':self.filters, 'fnu':fnu, 'fnu_err':fnu_err, 'verbose':self.verbose}
             else:
-                args = {'filters':self.filters, 'fnu':fnu, 'verbose':verbose}
+                args = {'filters':self.filters, 'fnu':fnu, 'verbose':self.verbose}
         elif flam is not None:
             if not hasattr(flam, 'unit'):
                 if isinstance(flam_units, str):
@@ -179,12 +196,13 @@ class Photometry(SED):
                 flam *= flam_units
             if flam_err is not None:
                 flam_err *= fnu_units
-                args = {'filters':self.filters, 'flam':flam, 'flam_err':flam_err, 'verbose':verbose}
+                args = {'filters':self.filters, 'flam':flam, 'flam_err':flam_err, 'verbose':self.verbose}
             else:
-                args = {'filters':self.filters, 'flam':flam, 'verbose':verbose}
+                args = {'filters':self.filters, 'flam':flam, 'verbose':self.verbose}
         else:
-            args = {'filters':self.filters, 'verbose':verbose}
-        super().__init__(**args, **kwargs)
+            args = {'filters':self.filters, 'verbose':self.verbose}
+        super().__init__(**args, **kwargs)  
+        
 
     @property
     def R(self):
@@ -198,6 +216,17 @@ class Photometry(SED):
     
     def __len__(self):
         return len(self.filters)
+
+    def predict(self, sed):
+        self.logger.info('Providing photometry prediction in fnu units')
+        sed.convert_units(yunit=u.uJy)
+        f = self.filters.get_photometry(sed['total'], redshift=sed.redshift)
+        args = {'redshift':sed.redshift, 'total':f}
+        for component in sed.components:
+            f = self.filters.get_photometry(sed[component], redshift=sed.redshift)
+            args.update({component:f})
+        self.update(**args)
+        return self
 
     # def __repr__(self):
     #     out = ''

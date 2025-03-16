@@ -30,7 +30,6 @@ class BaseSourceModel(BaseModel):
         self.model_type = 'source'
         super().__init__(params)
         
-
     def emit(self, params):
         raise NotImplementedError("Subclasses should implement this method")
 

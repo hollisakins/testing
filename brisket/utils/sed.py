@@ -26,6 +26,7 @@ from copy import deepcopy
 from astropy.units import Unit, Quantity, spectral_density, UnitTypeError
 from astropy.constants import c as speed_of_light
 from astropy.constants import h as plancks_constant
+import astropy.units as u
 import spectres
 
 from .. import config
@@ -102,7 +103,7 @@ class SED:
 
         self._x_key = self._x_keys[self._x_defs.index(True)]
         self._x = self._x[self._x_defs.index(True)]
-        self.units = hasattr(self._x, "unit")
+        
 
         if self._x_key == 'filters':
             if isinstance(self._x, Filters):
@@ -114,13 +115,15 @@ class SED:
             #TODO make sure that the filter wavelengths have units, IF y is provided with units
             self._x = self.filters.wav
             self._x_key = 'wav_obs'
+            self.units = True
         else:
             self.filters = None
+            self.units = hasattr(self._x, "unit")
             
         ### y-axis specification
         self._y = components
         if total is None:
-            self.logger.info('No flux/luminosity information provided, populating with zeros. If this is intended, you can ignore this message.')
+            self.logger.debug('No flux/luminosity information provided, populating with zeros. If this is intended, you can ignore this message.')
             self._y['total'] = np.zeros(len(self._x))
             self.units = False
         else:
@@ -420,20 +423,29 @@ class SED:
             self.logger.error("Cannot convert units for SED object without units. Assign units using SED.assign_units() first.")
             sys.exit()
 
+        if inplace:
+            sed = self
+        else:
+            sed = deepcopy(self)
+
         if xunit is not None:
+            if isinstance(xunit, str):
+                xunit = utils.unit_parser(xunit)
             # Convert x-units, and set _x to the new physical type / unit
-            x_frame = self._x_key.split('_')[1]
+            x_frame = sed._x_key.split('_')[1]
             if 'length' in xunit.physical_type:
                 x_key = f'wav_{x_frame}'
             elif 'frequency' in xunit.physical_type:
                 x_key = f'freq_{x_frame}'
             elif 'energy' in xunit.physical_type:
                 x_key = f'energy_{x_frame}'
-            self._x = getattr(self, x_key).to(xunit)
-            self._x_key = x_key
+            sed._x = getattr(sed, _x_key).to(xunit)
+            sed._x_key = x_key
 
         if yunit is not None:
-            fourPiLumDistSq = self.fourPiLumDistSq
+            if isinstance(yunit, str):
+                yunit = utils.unit_parser(yunit)
+            fourPiLumDistSq = sed.fourPiLumDistSq
             
             to_fnu = 'spectral flux density' in yunit.physical_type
             to_flam = 'spectral flux density wav' in yunit.physical_type
@@ -441,94 +453,97 @@ class SED:
             to_Lnu = 'energy' in yunit.physical_type
             to_Llam = 'yank' in yunit.physical_type
             to_L = 'power' in yunit.physical_type
-            current = self._y_type
+            current = sed._y_type
 
             # not changing physical type (i.e., fnu->fnu, flam->flam, etc.)
             if (current == 'f' and to_f) or (current == 'L' and to_L) or (current == 'fnu' and to_fnu) or (current == 'flam' and to_flam) or (current == 'Lnu' and to_Lnu) or (current == 'Llam' and to_Llam):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y).to(yunit) 
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y).to(yunit) 
             
             # going from fnu->flam, flam->fnu, Lnu->Llam, Llam->Lnu
             # TODO how does equivalencies handle rest-frame vs observed-frame?
             elif (current == 'fnu' and to_flam) or (current == 'flam' and to_fnu) or (current == 'Lnu' and to_Llam) or (current == 'Llam' and to_Lnu): # easy to convert between fnu and flam
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = component_y.to(yunit, equivalencies=spectral_density(self._x)) 
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = component_y.to(yunit, equivalencies=spectral_density(sed.wav_obs)) 
 
             # going from fnu->Lnu, flam->Llam, or f->L
             elif (current == 'fnu' and to_Lnu) or (current == 'flam' and to_Llam) or (current == 'f' and to_L):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y * fourPiLumDistSq).to(yunit) 
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y * fourPiLumDistSq).to(yunit) 
             
             # going from Lnu->fnu, Llam->flam, or L->f
             elif (current == 'Lnu' and to_fnu) or (current == 'Llam' and to_flam) or (current == 'L' and to_f):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y / fourPiLumDistSq).to(yunit) 
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y / fourPiLumDistSq).to(yunit) 
 
             # going from fnu->Llam or flam->Lnu
             elif (current == 'fnu' and to_Llam) or (current == 'flam' and to_Lnu):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y * fourPiLumDistSq).to(yunit, equivalencies=spectral_density(self._x)) 
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y * fourPiLumDistSq).to(yunit, equivalencies=spectral_density(sed.wav_obs)) 
             
             # going from Lnu->flam or Llam->fnu
             elif (current == 'Lnu' and to_flam) or (current == 'Llam' and to_fnu):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y / fourPiLumDistSq).to(yunit, equivalencies=spectral_density(self._x)) 
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y / fourPiLumDistSq).to(yunit, equivalencies=spectral_density(sed.wav_obs)) 
             
             # specific implementations for converting to/from f
             elif (current == 'f' and to_fnu):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y / self.freq_obs).to(yunit) # TODO handle frame
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y / sed.freq_obs).to(yunit) # TODO handle frame
             elif (current == 'f' and to_flam):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y / self.wav_obs).to(yunit)
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y / sed.wav_obs).to(yunit)
             elif (current == 'f' and to_Lnu):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y * fourPiLumDistSq / self.freq_obs).to(yunit) # TODO handle frame
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y * fourPiLumDistSq / sed.freq_obs).to(yunit) # TODO handle frame
             elif (current == 'f' and to_Llam):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y * fourPiLumDistSq / self.wav_obs).to(yunit)
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y * fourPiLumDistSq / sed.wav_obs).to(yunit)
             elif (current == 'fnu' and to_f):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y * self.freq_obs).to(yunit) # TODO handle frame
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y * sed.freq_obs).to(yunit) # TODO handle frame
             elif (current == 'flam' and to_f):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y * self.wav_obs).to(yunit)
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y * sed.wav_obs).to(yunit)
             elif (current == 'Lnu' and to_f):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y / fourPiLumDistSq * self.freq_obs).to(yunit) # TODO handle frame
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y / fourPiLumDistSq * sed.freq_obs).to(yunit) # TODO handle frame
             elif (current == 'Llam' and to_f):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y / fourPiLumDistSq * self.wav_obs).to(yunit)
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y / fourPiLumDistSq * sed.wav_obs).to(yunit)
             
             # specific implementations for converting to/from L
             elif (current == 'L' and to_fnu):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y / fourPiLumDistSq / self.freq_obs).to(yunit) # TODO handle frame
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y / fourPiLumDistSq / sed.freq_obs).to(yunit) # TODO handle frame
             elif (current == 'L' and to_flam):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y / fourPiLumDistSq / self.wav_obs).to(yunit)
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y / fourPiLumDistSq / sed.wav_obs).to(yunit)
             elif (current == 'L' and to_Lnu):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y / self.freq_obs).to(yunit) # TODO handle frame
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y / sed.freq_obs).to(yunit) # TODO handle frame
             elif (current == 'L' and to_Llam):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y / self.wav_obs).to(yunit)
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y / sed.wav_obs).to(yunit)
             elif (current == 'fnu' and to_L):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y * fourPiLumDistSq * self.freq_obs).to(yunit) # TODO handle frame
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y * fourPiLumDistSq * sed.freq_obs).to(yunit) # TODO handle frame
             elif (current == 'flam' and to_L):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y * fourPiLumDistSq * self.wav_obs).to(yunit)
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y * fourPiLumDistSq * sed.wav_obs).to(yunit)
             elif (current == 'Lnu' and to_L):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y * self.freq_obs).to(yunit) # TODO handle frame
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y * sed.freq_obs).to(yunit) # TODO handle frame
             elif (current == 'Llam' and to_L):
-                for component_name, component_y in self._y.items():
-                    self._y[component_name] = (component_y * self.wav_obs).to(yunit)
+                for component_name, component_y in sed._y.items():
+                    sed._y[component_name] = (component_y * sed.wav_obs).to(yunit)
 
             else:
                 self.logger.error(f"Couldn't figure out how to convert from {current_y_unit} to {yunit}. Perhaps this is not implemented yet?")
                 sys.exit()
+            
+            if not inplace:
+                return sed
         
         
         
@@ -659,15 +674,26 @@ class SED:
             impl = [f for f in self._x_implemented if f != self._x_key]
             x.add(f'available: [dark_green italic]{", ".join(impl)}')
 
-            y = tree.add('[bold #6495ED not italic]y-axis[white]: [italic not bold]' + f'[green]total[white not italic]: [{self._y['total'].value[0]:.2f}, {self._y['total'].value[1]:.2f}, ..., {self._y['total'].value[-2]:.2f}, {self._y['total'].value[-1]:.2f}] [green]{self._y_unit} [dark_red]{np.shape(self._y['total'])}')
-            for name, value in self._y.items():
-                if name == 'total': continue
-                y.add(f'[green italic]{name}[white not italic]: [{value.value[0]:.2f}, {value.value[1]:.2f}, ..., {value.value[-2]:.2f}, {value.value[-1]:.2f}] [green]{self._y_unit} [dark_red]{np.shape(value)}')
+            if self.ndim==1:
+                y = tree.add('[bold #6495ED not italic]y-axis[white]: [italic not bold]' + f'[green]total[white not italic]: [{self._y['total'].value[0]:.2f}, {self._y['total'].value[1]:.2f}, ..., {self._y['total'].value[-2]:.2f}, {self._y['total'].value[-1]:.2f}] [green]{self._y_unit} [dark_red]{np.shape(self._y['total'])}')
+                for name, value in self._y.items():
+                    if name == 'total': continue
+                    y.add(f'[green italic]{name}[white not italic]: [{value.value[0]:.2f}, {value.value[1]:.2f}, ..., {value.value[-2]:.2f}, {value.value[-1]:.2f}] [green]{self._y_unit} [dark_red]{np.shape(value)}')
+            else:
+                y = tree.add('[bold #6495ED not italic]y-axis[white]: [italic not bold]' + f'[green]total[white not italic]: [...] [green]{self._y_unit} [dark_red]{np.shape(self._y['total'])}')
+                for name, value in self._y.items():
+                    if name == 'total': continue
+                    y.add(f'[green italic]{name}[white not italic]: [...] [green]{self._y_unit} [dark_red]{np.shape(value)}')
             
             props = tree.add('[bold #6495ED not italic]properties[white]:')
-            props.add(f'[green]beta[white]: ?')
-            props.add(f'[green]Muv[white]: ?')
-            props.add(f'[green]Lbol[white]: ?')
+            if self.ndim == 1:
+                props.add(f'[green]beta[white]: {self.properties['beta']:.3f}')
+                props.add(f'[green]Muv[white]: {self.properties['Muv']:.3f}')
+                props.add(f'[green]Lbol[white]: ?')
+            elif self.ndim == 2:
+                props.add(f'[green]beta[white]: [{self.properties['beta'][0]:.3f}, {self.properties['beta'][1]:.3f}, ..., {self.properties['beta'][-2]:.3f}, {self.properties['beta'][-1]:.3f}]')
+                props.add(f'[green]Muv[white]: [{self.properties['Muv'][0]:.3f}, {self.properties['Muv'][1]:.3f}, ..., {self.properties['Muv'][-2]:.3f}, {self.properties['Muv'][-1]:.3f}]')
+                props.add(f'[green]Lbol[white]: ?')
         else:
             if self.filters is not None:
                 x = tree.add('[bold #6495ED not italic]x-axis[white]: [italic not bold]' + f'[green]filters[white not italic]: {", ".join(self.filters.nicknames)} [dark_red]{np.shape(self._x)}')
@@ -677,15 +703,22 @@ class SED:
             impl = [f for f in self._x_implemented if f != self._x_key]
             x.add(f'available: [dark_green italic]{", ".join(impl)}')
 
-            y = tree.add('[bold #6495ED not italic]y-axis[white]: [italic not bold]' + f'[green]total[white not italic]: [{self._y['total'][0]:.2f}, {self._y['total'][1]:.2f}, ..., {self._y['total'][-2]:.2f}, {self._y['total'][-1]:.2f}] [dark_red]{np.shape(self._y['total'])}')
-            for name, value in self._y.items():
-                if name == 'total': continue
-                y.add(f'[green italic]{name}[white not italic]: [{value[0]:.2f}, {value[1]:.2f}, ..., {value[-2]:.2f}, {value[-1]:.2f}] [dark_red]{np.shape(value)}')
+            if self.ndim==1:
+                y = tree.add('[bold #6495ED not italic]y-axis[white]: [italic not bold]' + f'[green]total[white not italic]: [{self._y['total'][0]:.2f}, {self._y['total'][1]:.2f}, ..., {self._y['total'][-2]:.2f}, {self._y['total'][-1]:.2f}] [dark_red]{np.shape(self._y['total'])}')
+                for name, value in self._y.items():
+                    if name == 'total': continue
+                    y.add(f'[green italic]{name}[white not italic]: [{value[0]:.2f}, {value[1]:.2f}, ..., {value[-2]:.2f}, {value[-1]:.2f}] [dark_red]{np.shape(value)}')
             
-            props = tree.add('[bold #6495ED not italic]properties[white]:')
-            props.add(f'[green]beta[white]: ?')
-            props.add(f'[green]Muv[white]: ?')
-            props.add(f'[green]Lbol[white]: ?')
+            else:
+                y = tree.add('[bold #6495ED not italic]y-axis[white]: [italic not bold]' + f'[green]total[white not italic]: [...] [dark_red]{np.shape(self._y['total'])}')
+                for name, value in self._y.items():
+                    if name == 'total': continue
+                    y.add(f'[green italic]{name}[white not italic]: [...] [dark_red]{np.shape(value)}')
+            
+            # props = tree.add('[bold #6495ED not italic]properties[white]:')
+            # props.add(f'[green]beta[white]: ?')
+            # props.add(f'[green]Muv[white]: ?')
+            # props.add(f'[green]Lbol[white]: ?')
 
 
         # width = np.max([width, len(wstr)+4])
@@ -822,7 +855,10 @@ class SED:
         Bolometric luminosity of the SED.
         To be implemented.
         '''
-        return None
+        if self.ndim == 1:
+            return np.nan
+        elif self.ndim == 2:
+            return np.nan * np.zeros(len(self._y['total']))
 
     @property
     def beta(self) -> float | np.ndarray:
@@ -834,8 +870,22 @@ class SED:
             return NotImplemented
         w = self.wav_rest.to(Unit('angstrom')).value
         windows = ((w>=1268)&(w<=1284))|((w>=1309)&(w<=1316))|((w>=1342)&(w<=1371))|((w>=1407)&(w<=1515))|((w>=1562)&(w<=1583))|((w>=1677)&(w<=1740))|((w>=1760)&(w<=1833))|((w>=1866)&(w<=1890))|((w>=1930)&(w<=1950))|((w>=2400)&(w<=2580))
-        p = np.polyfit(np.log10(w[windows]), np.log10(self.flam[windows].value), deg=1)
-        return p[0]
+        if self._y_type != 'flam':
+            s = self.convert_units(yunit='ergscm2a', inplace=False)
+            y = s._y['total'].value
+        else:
+            y = self._y['total'].value
+        if self.ndim == 1:
+            p = np.polyfit(np.log10(w[windows]), np.log10(y[windows]), deg=1)[0]
+            return p
+        elif self.ndim == 2:
+            N = np.shape(y)[0]
+            p = np.zeros(N)
+            for i in range(N):
+                p[i] = np.polyfit(np.log10(w[windows]), np.log10(y[i][windows]), deg=1)[0]
+            return p
+        else:
+            raise NotImplemented
 
     @property
     def Muv(self) -> float | np.ndarray | NotImplemented:
@@ -847,13 +897,26 @@ class SED:
             return NotImplemented
         w = self.wav_rest.to(Unit('angstrom')).value
         tophat = (w > 1450)&(w < 1550)
-        mUV = (np.mean(self.fnu[tophat])/(1+self.redshift)).to(Unit('ABmag')).value
+
+        if self._y_type != 'fnu':
+            s = self.convert_units(yunit='Jy', inplace=False)
+            y = s._y['total'].value
+        else:
+            y = self._y['total'].to(Unit('Jy')).value
+
+        if self.ndim == 1:
+            mUV = -2.5*np.log10((np.mean(y[tophat])/(1+self.redshift))/3631)
+        elif self.ndim == 2:
+            N = np.shape(y)[0]
+            mUV = np.zeros(N)
+            for i in range(N):
+                mUV[i] = -2.5*np.log10((np.mean(y[i][tophat])/(1+self.redshift))/3631)
         return mUV - 5*(np.log10(self.luminosity_distance.to(Unit('pc')).value)-1)
 
     @property
     def properties(self) -> dict:
         '''Dictionary of derived SED properties'''
-        return dict(beta=self.beta, Lbol=self.Lbol)
+        return dict(beta=self.beta, Muv=self.Muv, Lbol=self.Lbol)
 
     # things to compute automatically:
     # wavelength, frequency, energy
@@ -866,7 +929,7 @@ class SED:
 
     def plot(self, ax: mpl.axes.Axes = None, 
              x: str = 'wav_rest', 
-             y: str = 'fnu', 
+             y: str = 'total', 
              yerr: str = None,
              step: bool = False, 
              xscale: str = None,
@@ -919,9 +982,9 @@ class SED:
         
 
         x_plot = getattr(self, x)
-        y_plot = getattr(self, y)    
+        y_plot = self[y]
         if yerr is not None:
-            yerr_plot = getattr(self, yerr) 
+            yerr_plot = self[yerr]
 
         if xlim is None:
             xmin, xmax = np.min(x_plot), np.max(x_plot)
@@ -953,10 +1016,12 @@ class SED:
         x_plot = x_plot.to(xunit)
         # y_plot = y_plot.to(yunit)
 
-        if y == 'fnu':
+        if self._y_type == 'fnu':
             ylabel = r'$f_{\nu}$'
-        elif y == 'flam':
+        elif self._y_type == 'flam':
             ylabel = r'$f_{\lambda}$'
+        else:
+            raise Exception
 
         if x == 'wav_rest':
             if verbose_labels: xlabel = 'Rest Wavelength'
@@ -1080,6 +1145,10 @@ class SED:
         return list(self._y.keys())
 
 
+    # def append(self):
+
+
+
 if __name__ == '__main__':
     # Test SED object
     import astropy.units as u
@@ -1099,3 +1168,6 @@ if __name__ == '__main__':
     # print(sed.components)
     # print(sed._y['total'].unit)
     print(sed)
+
+
+

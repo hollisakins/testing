@@ -96,7 +96,7 @@ class Filters(object):
                                               self.filt_dict[filt][:, 1],
                                               left=0, right=0)
 
-    def get_photometry(self, sed: SED, which: str = 'fnu'):
+    def get_photometry(self, y, redshift):
         """ Calculates photometric fluxes. The filters are first re-
         sampled onto the same wavelength grid with transmission values
         blueshifted by (1+z). This is followed by an integration over
@@ -119,7 +119,7 @@ class Filters(object):
             raise ValueError("Please use resample_filter_curves method to set"
                              + " wavelengths before calculating photometry.")
 
-        redshifted_wavs = self.wavelengths*(1. + sed.redshift)
+        redshifted_wavs = self.wavelengths*(1. + redshift)
 
         # Array containing blueshifted filter curves
         filters_z = np.zeros_like(self.filt_array)
@@ -131,7 +131,7 @@ class Filters(object):
                                         left=0, right=0)
 
         # Calculate numerator of expression
-        flux = np.expand_dims(getattr(sed, which)*self.widths*self.wavelengths, axis=1)
+        flux = np.expand_dims(y*self.widths*self.wavelengths, axis=1)
         flux = np.sum(flux*filters_z, axis=0)
 
         # Calculate denominator of expression

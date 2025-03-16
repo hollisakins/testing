@@ -8,6 +8,7 @@ from . import models
 from . import fitting
 from . import cli
 from . import grids
+from . import plotting
 
 from .fitting import priors
 from .parameters import Params, FreeParam, FixedParam

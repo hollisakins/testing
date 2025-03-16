@@ -244,16 +244,11 @@ class Model(object):
             return
 
         self.logger.info('Computing observables')
-        self.prediction = Observation()
-        for phot in self.obs.phot_list:
-            if phot._y_key in ['fnu', 'flam']:
-                k = phot._y_key
-            else:
-                self.logger.info('No reference observed photometry, providing prediction in fnu units')
-                k = 'fnu'
-            f = phot.filters.get_photometry(self.sed, which=k)
-            args = {'filters': phot.filters, k: f, 'redshift': self.redshift}
-            self.prediction.add_phot(**args)
+        self.prediction = deepcopy(self.obs)
+
+        # photometry
+        for phot in self.prediction.phot_list:
+            phot.predict(self.sed)
             
         for spec in self.obs.spec_list:
             # .. apply spectral calibration here
